@@ -60,12 +60,14 @@ export default function Index() {
   channel.bind(`orders.update`, (response) => {
     setOrders((orders)=>{
       const data = response;
+      
       const newOrders = [...orders];
       data.orders.forEach((order, i) => {
         const orderChange = order;
         const orderIndex = orders.findIndex(order => order.id === orderChange.id);
         //Need a check for a new order, sort by the status key on update
         if(orderIndex !== -1) {
+          orderChange.quote = newOrders[orderIndex].quote;
           newOrders[orderIndex] = {...newOrders[orderIndex], ...orderChange};
         }
       });

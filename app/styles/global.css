@@ -4,3 +4,13 @@
 .grid-container{
   
 }
+
+.header{
+  height:45px;
+}
+
+.marquee {
+    position: absolute
+    box-sizing: border-box;
+    bottom: 100%;
+}
