@@ -25,20 +25,16 @@ export async function loader ({ request }: LoaderArgs) {
 };
 
 
-export default function Index() {
+const Index = ({pusher}) => {
   const {data, status_options} = useLoaderData();
   const [orders, setOrders] = useState(data);
-
+  
   useEffect(() => {
     const interval = setInterval(() => {
       
     }, (1000*60)+1);
     return () => clearInterval(interval);
   }, []);
-  
-  const pusher = new Pusher('8dbf7fe9fc3eebec3913', {
-    cluster: 'us2',
-  });
   
   const channel = pusher.subscribe("orders");
 
@@ -90,3 +86,26 @@ export default function Index() {
     </main>
   );
 }
+
+const PusherWrapper = () => {
+  const [pusher, setPusher] = useState(null);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      
+    }, (1000*60)+1);
+    return () => clearInterval(interval);
+  }, []);
+  useEffect(() => {
+    const pusherInstance = new Pusher('8dbf7fe9fc3eebec3913', {
+      cluster: 'us2',
+    });
+    setPusher(pusherInstance);
+  }, []);
+  return (
+    <>
+      {pusher && <Index pusher={pusher} />}
+    </>
+    
+  )
+
+  export default PusherWrapper;
