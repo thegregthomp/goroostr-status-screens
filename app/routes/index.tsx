@@ -25,18 +25,27 @@ export async function loader ({ request }: LoaderArgs) {
 };
 
 
-const Index = ({pusher}) => {
+export default function Index() {
   const {data, status_options} = useLoaderData();
   const [orders, setOrders] = useState(data);
-  
+
   useEffect(() => {
     const interval = setInterval(() => {
       
     }, (1000*60)+1);
     return () => clearInterval(interval);
   }, []);
+
+  const [pusher, setPusher] = useState(null);
+
+  useEffect(() => {
+    const pusherInstance = new Pusher('8dbf7fe9fc3eebec3913', {
+      cluster: 'us2',
+    });
+    setPusher(pusherInstance);
+  }, []);
   
-  const channel = pusher.subscribe("orders");
+  const channel = (pusher) ? pusher.subscribe("orders") : null;
 
   const pluck = property => element => element[property];
 
@@ -52,7 +61,9 @@ const Index = ({pusher}) => {
 
     return sorted;
   }, []);
-
+  
+  if(!channel) return null;
+  
   channel.bind(`orders.update`, (response) => {
     setOrders((orders)=>{
       const data = response;
@@ -86,26 +97,3 @@ const Index = ({pusher}) => {
     </main>
   );
 }
-
-const PusherWrapper = () => {
-  const [pusher, setPusher] = useState(null);
-  useEffect(() => {
-    const interval = setInterval(() => {
-      
-    }, (1000*60)+1);
-    return () => clearInterval(interval);
-  }, []);
-  useEffect(() => {
-    const pusherInstance = new Pusher('8dbf7fe9fc3eebec3913', {
-      cluster: 'us2',
-    });
-    setPusher(pusherInstance);
-  }, []);
-  return (
-    <>
-      {pusher && <Index pusher={pusher} />}
-    </>
-    
-  )
-
-  export default PusherWrapper;
