@@ -19,6 +19,7 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
   )
   
   useEffect(() => {
+    console.log('resize');
     if(resize.length > 0){
       console.log(resize[0]/2 );
       const containerHeight = refContainer.current.offsetHeight - 45;
@@ -35,6 +36,7 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
   }, [resize]);
 
   useEffect(() => {
+    console.log('orders');
     const containerHeight = refContainer.current.offsetHeight - 45;
     const dataHeight = dataRef.current.clientHeight;
     setAnimationConfig({
@@ -51,6 +53,7 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
 
   useEffect(() => {
     const interval = setInterval(() => {
+      console.log('interval');
       if(isLargerThanContainer){
         const {dataHeight, containerHeight} = animationConfig;
         console.log(dataHeight, containerHeight)
@@ -79,6 +82,7 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
   const filteredOrders = orders.filter((order) => {
     return order.status_value.status_option.key == statusKey;
   });
+
   return (
     <div className={`w-full flex flex-col ${color}`} ref={refContainer}>
       <div className="text-center text-lg py-2 font-bold header">{statusOptions.find((option)=>option.key == statusKey).name} ({filteredOrders.length})</div>

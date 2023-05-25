@@ -28,6 +28,7 @@ export async function loader ({ request }: LoaderArgs) {
 export default function Index() {
   const {data, status_options} = useLoaderData();
   const [orders, setOrders] = useState(data);
+  const [channel, setChannel] = useState(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -44,8 +45,13 @@ export default function Index() {
     });
     setPusher(pusherInstance);
   }, []);
+
+  useEffect(() => {
+    if(pusher){
+      setChannel(pusher.subscribe("orders"));
+    }
+  }, [pusher]);
   
-  const channel = (pusher) ? pusher.subscribe("orders") : null;
 
   const pluck = property => element => element[property];
 
@@ -61,28 +67,35 @@ export default function Index() {
 
     return sorted;
   }, []);
+
+  useEffect(() => {
+    if(!channel) return;
+    channel.bind(`orders.update`, (response) => {
+      setOrders((orders)=>{
+        const data = response;
+        
+        const newOrders = [...orders];
+        data.orders.forEach((order, i) => {
+          const orderChange = order;
+          const orderIndex = orders.findIndex(order => order.id === orderChange.id);
+          //Need a check for a new order, sort by the status key on update
+          if(orderIndex !== -1) {
+            orderChange.quote = newOrders[orderIndex].quote;
+            newOrders[orderIndex] = {...newOrders[orderIndex], ...orderChange};
+          }
+        });
+        const sorted = sortAndOrder(newOrders, status_options);
+  
+        return sorted;
+      });
+    });
+  }, [channel, sortAndOrder, status_options]);
   
   if(!channel) return null;
   
-  channel.bind(`orders.update`, (response) => {
-    setOrders((orders)=>{
-      const data = response;
-      
-      const newOrders = [...orders];
-      data.orders.forEach((order, i) => {
-        const orderChange = order;
-        const orderIndex = orders.findIndex(order => order.id === orderChange.id);
-        //Need a check for a new order, sort by the status key on update
-        if(orderIndex !== -1) {
-          orderChange.quote = newOrders[orderIndex].quote;
-          newOrders[orderIndex] = {...newOrders[orderIndex], ...orderChange};
-        }
-      });
-      const sorted = sortAndOrder(newOrders, status_options);
+  
 
-      return sorted;
-    });
-  });
+  
 
   return (
     <main className="relative min-h-screen bg-white sm:flex sm:items-center sm:justify-center">
