@@ -76,10 +76,12 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
   }, [api, isLargerThanContainer]);
 
   
-
+  const filteredOrders = orders.filter((order) => {
+    return order.status_value.status_option.key == statusKey;
+  });
   return (
     <div className={`w-full flex flex-col ${color}`} ref={refContainer}>
-      <div className="text-center text-lg py-2 font-bold header">{statusOptions.find((option)=>option.key == statusKey).name}</div>
+      <div className="text-center text-lg py-2 font-bold header">{statusOptions.find((option)=>option.key == statusKey).name} ({filteredOrders.length})</div>
       <div className="flex flex-col py-2 px-3 flex-1 overflow-hidden relative">
       <animated.div
       style={{
@@ -88,7 +90,7 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
       
       >
         <div className={isLargerThanContainer ? 'marquee' : ''} ref={dataRef}>
-          {orders.map((order)=> {
+          {filteredOrders.map((order)=> {
             
             const modelInfo = JSON.parse(order.quote[0].model_info);
             const details = JSON.parse(order.quote[0].details);
