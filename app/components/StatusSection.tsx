@@ -20,7 +20,6 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
   
   useEffect(() => {
     if(resize.length > 0){
-      console.log(resize[0]/2 );
       const containerHeight = refContainer.current.offsetHeight - 45;
       const dataHeight = dataRef.current.clientHeight;
       setAnimationConfig({
@@ -29,7 +28,6 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
       });
       if(dataHeight > containerHeight){
         setIsLargerThanContainer(true);
-        // console.log(dataHeight, containerHeight);
       }
     }
   }, [resize]);
@@ -51,10 +49,8 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
 
   useEffect(() => {
     const interval = setInterval(() => {
-      console.log('interval');
       if(isLargerThanContainer){
         const {dataHeight, containerHeight} = animationConfig;
-        console.log(dataHeight, containerHeight)
         api.start({
           config: {
             duration: 10000
