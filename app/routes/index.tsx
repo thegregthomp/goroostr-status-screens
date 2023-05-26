@@ -50,6 +50,16 @@ export default function Index() {
     if(pusher && !channel){
       console.log("============================SUBSCRIBING TO CHANNEL============================");
       setChannel(pusher.subscribe("orders"));
+      pusher.connection.bind("connected", function () {
+        console.log('Pusher Connected')
+      });
+      pusher.connection.bind("error", function (error) {
+        console.error("connection error", error);
+      });
+      pusher.connection.bind("state_change", function (states) {
+        // states = {previous: 'oldState', current: 'newState'}
+        console.log("PUSHER STATE", states);
+      });
     }
     return () => {
       if(channel && pusher) 
@@ -98,6 +108,7 @@ export default function Index() {
         return sorted;
       });
     });
+
   }, [channel, sortAndOrder, status_options]);
   
   if(!channel) return null;
