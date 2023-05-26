@@ -47,10 +47,19 @@ export default function Index() {
   }, []);
 
   useEffect(() => {
-    if(pusher){
+    if(pusher && !channel){
+      console.log("============================SUBSCRIBING TO CHANNEL============================");
       setChannel(pusher.subscribe("orders"));
     }
-  }, [pusher]);
+    return () => {
+      if(channel && pusher) 
+      {
+        console.log("============================UNSUBSCRIBING FROM CHANNEL============================");
+        channel.unbind();
+        pusher.unsubscribe(channelName);
+      }
+    }
+  }, [channel, pusher]);
   
 
   const pluck = property => element => element[property];

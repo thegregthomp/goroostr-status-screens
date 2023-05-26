@@ -19,7 +19,6 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
   )
   
   useEffect(() => {
-    console.log('resize');
     if(resize.length > 0){
       console.log(resize[0]/2 );
       const containerHeight = refContainer.current.offsetHeight - 45;
@@ -36,7 +35,6 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
   }, [resize]);
 
   useEffect(() => {
-    console.log('orders');
     const containerHeight = refContainer.current.offsetHeight - 45;
     const dataHeight = dataRef.current.clientHeight;
     setAnimationConfig({
