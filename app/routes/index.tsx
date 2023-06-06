@@ -43,6 +43,13 @@ export default function Index() {
     const pusherInstance = new Pusher('8dbf7fe9fc3eebec3913', {
       cluster: 'us2',
     });
+    pusherInstance.connection.bind( 'error', function( err ) {
+      if( err.error.data.code === 4004 ) {
+        alert('Over limit!');
+      } else{
+        alert(`Pusher Error: ${err.error.data.code}`);
+      }
+    });
     setPusher(pusherInstance);
   }, []);
 
