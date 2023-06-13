@@ -100,8 +100,7 @@ export default function Index() {
     () => {
       rebuildSubscripton()
     },
-    // 120000,
-    10000
+    120000,
   )
 
   
