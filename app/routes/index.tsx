@@ -9,6 +9,7 @@ import { getOrders } from "~/models/orders.server";
 import Pusher from 'pusher-js';
 import sortBy from "lodash/sortBy";
 import indexOf from "lodash/indexOf";
+import { useInterval } from 'usehooks-ts'
 
 
 
@@ -29,6 +30,7 @@ export default function Index() {
   const {data, status_options} = useLoaderData();
   const [orders, setOrders] = useState(data);
   const [channel, setChannel] = useState(null);
+  const [shouldReset, setShouldReset] = useState(true);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -40,23 +42,28 @@ export default function Index() {
   const [pusher, setPusher] = useState(null);
 
   useEffect(() => {
-    const pusherInstance = new Pusher('8dbf7fe9fc3eebec3913', {
-      cluster: 'us2',
-    });
-    pusherInstance.connection.bind( 'error', function( err ) {
-      if( err.error.data.code === 4004 ) {
-        alert('Over limit!');
-      } else{
-        alert(`Pusher Error: ${err.error.data.code}`);
-      }
-    });
-    setPusher(pusherInstance);
-  }, []);
+    if(shouldReset){
+      const pusherInstance = new Pusher('8dbf7fe9fc3eebec3913', {
+        cluster: 'us2',
+      });
+      pusherInstance.connection.bind( 'error', function( err ) {
+        if( err.error.data.code === 4004 ) {
+          alert('Over limit!');
+        } else{
+          alert(`Pusher Error: ${err.error.data.code}`);
+        }
+      });
+      setPusher(pusherInstance);
+      setShouldReset(false);
+    }
+  }, [shouldReset]);
 
   useEffect(() => {
     if(pusher && !channel){
       console.log("============================SUBSCRIBING TO CHANNEL============================");
+      
       setChannel(pusher.subscribe("orders"));
+
       pusher.connection.bind("connected", function () {
         console.log('Pusher Connected')
       });
@@ -64,19 +71,39 @@ export default function Index() {
         console.error("connection error", error);
       });
       pusher.connection.bind("state_change", function (states) {
-        // states = {previous: 'oldState', current: 'newState'}
-        console.log("PUSHER STATE", states);
+      });
+      pusher.connection.bind("disconnected", function () {
+        console.log('Pusher Disconnected')
       });
     }
     return () => {
-      if(channel && pusher) 
+      if(channel && pusher && pusher.connection.state !== 'disconnected') 
       {
         console.log("============================UNSUBSCRIBING FROM CHANNEL============================");
         channel.unbind();
-        pusher.unsubscribe(channelName);
+        pusher.unsubscribe("orders");
       }
     }
   }, [channel, pusher]);
+
+  const rebuildSubscripton = useCallback(() => {
+    if(channel && pusher)
+    {
+      console.log("============================REBUILDING SUBSCRIPTION============================");
+      pusher.unsubscribe("orders");
+      channel.unbind();
+      setChannel(null);
+    }
+  }, [channel, pusher]);
+
+  useInterval(
+    () => {
+      rebuildSubscripton()
+    },
+    // 120000,
+    10000
+  )
+
   
 
   const pluck = property => element => element[property];
