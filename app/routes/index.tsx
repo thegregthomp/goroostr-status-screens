@@ -64,6 +64,8 @@ export default function Index() {
       
       setChannel(pusher.subscribe("orders"));
 
+      console.log(pusher);
+
       pusher.connection.bind("connected", function () {
         console.log('Pusher Connected')
       });
@@ -71,10 +73,15 @@ export default function Index() {
         console.error("connection error", error);
       });
       pusher.connection.bind("state_change", function (states) {
+        console.log('Pusher state change', states);
       });
       pusher.connection.bind("disconnected", function () {
         console.log('Pusher Disconnected')
       });
+      pusher.connection.bind("failed", function () {
+        console.log('Pusher failed')
+      });
+      
     }
     return () => {
       if(channel && pusher && pusher.connection.state !== 'disconnected') 
@@ -90,17 +97,22 @@ export default function Index() {
     if(channel && pusher)
     {
       console.log("============================REBUILDING SUBSCRIPTION============================");
-      pusher.unsubscribe("orders");
       channel.unbind();
+      pusher.unsubscribe("orders");
+      pusher.disconnect();
       setChannel(null);
+      setPusher(null);
+      setShouldReset(true);
     }
   }, [channel, pusher]);
 
   useInterval(
     () => {
-      rebuildSubscripton()
+      const state = pusher.connection.state;
+      console.log('Pusher state', state);
+      // rebuildSubscripton()
     },
-    120000,
+    5000
   )
 
   
