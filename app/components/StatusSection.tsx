@@ -118,12 +118,16 @@ export default function StatusSection({orders, statusKey, statusOptions, color='
                 break;
 
             }
+            let orderString = order.quote[0].model_desc;
+            if(orderString.length > 50){
+              orderString = order.quote[0].model_desc.substr(0, 50) + "\u2026"
+            }
             return (
             <React.Fragment key={order.id}>
               {order.status_value.status_option.key == statusKey && (
-                <div className={`${background} py-1 px-2 rounded shadow-sm mb-1 flex justify-between`}>
+                <div className={`${background} py-0.5 px-2 rounded shadow-sm mb-1 flex justify-between`}>
                   <div>
-                  <span className={`${orderIdColor} font-bold inline-block mr-1`}>{order.id}</span> &#x2022; <span>{order.quote[0].model_desc}</span>
+                  <span className={`${orderIdColor} font-bold text-sm inline-block`}>{order.id}</span> &#x2022; <span className="text-sm">{orderString}</span><br />
                   </div>
                   <span>
                     {modelInfo.working_status == 'working' ? (

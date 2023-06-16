@@ -31,14 +31,6 @@ export default function Index() {
   const [orders, setOrders] = useState(data);
   const [channel, setChannel] = useState(null);
   const [shouldReset, setShouldReset] = useState(true);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      
-    }, (1000*60)+1);
-    return () => clearInterval(interval);
-  }, []);
-
   const [pusher, setPusher] = useState(null);
 
   useEffect(() => {
@@ -135,6 +127,8 @@ export default function Index() {
   useEffect(() => {
     if(!channel) return;
     channel.bind(`orders.update`, (response) => {
+      console.log('============================ORDER UPDATE============================');
+      console.log(response);
       setOrders((orders)=>{
         const data = response;
         
