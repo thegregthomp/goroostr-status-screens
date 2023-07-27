@@ -108,9 +108,9 @@ export default function Index() {
       `http://goroostr-api.test/api/get-status-orders`
     );
     const { data, custom } = await response.json();
-    // setOrders(orders);
+    setOrders(data);
     setCustomOrders(custom);
-  }, 300000);
+  }, 60000);
 
   const pluck = (property) => (element) => element[property];
 

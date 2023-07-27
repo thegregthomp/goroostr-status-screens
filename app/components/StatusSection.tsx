@@ -220,6 +220,7 @@ export default function StatusSection({
               ref={dataRef}
             >
               {orders.map((order) => {
+                console.log(order);
                 return (
                   <React.Fragment key={order.id}>
                     <div
@@ -232,7 +233,12 @@ export default function StatusSection({
                           {order.order_id}-{order.id}
                         </span>{" "}
                         &#x2022;{" "}
-                        <span className="text-sm">{order.description}</span>
+                        <span className="text-sm">
+                          {order.description}{" "}
+                          <span className="text-xs font-bold text-gray-400">
+                            ({order.status_value.status_option.key})
+                          </span>
+                        </span>
                         <br />
                       </div>
                       <span>
