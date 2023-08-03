@@ -121,10 +121,10 @@ export default function StatusSection({
               {filteredOrders.map((order) => {
                 const modelInfo = JSON.parse(order.model_info);
                 const details = JSON.parse(order.details);
-                const isBulk = order.cart.bulk_order != null;
-                let orderDetails = order.cart.order;
+                const isBulk = order.bulk_order != null;
+                let orderDetails = order.order;
                 if (isBulk) {
-                  orderDetails = order.cart.bulk_order;
+                  orderDetails = order.bulk_order;
                 }
                 const statusDate = DateTime.fromSQL(
                   order.status_value.created_at
