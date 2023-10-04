@@ -22,6 +22,8 @@ export default function StatusSection({
   const refContainer = useRef(null);
   const [isLargerThanContainer, setIsLargerThanContainer] = useState(false);
   const [animationConfig, setAnimationConfig] = useState({} as any);
+  const [bulkOrders, setBulkOrders] = useState([]) as any;
+  const [bulkOrdersSummary, setBulkOrdersSummary] = useState([]) as any;
   // const [styles, setStyles] = useState({});
   const dataRef = useRef(null);
 
@@ -31,6 +33,69 @@ export default function StatusSection({
     }),
     []
   );
+
+  const groupBulkOrders = (orders) => {
+    const groupedOrders = [];
+    const bulkOrders = orders.filter((order) => {
+      return order.bulk_order != null;
+    });
+    //group bulk orders by order_id
+    bulkOrders.forEach((order) => {
+      const index = groupedOrders.findIndex(
+        (groupedOrder) => groupedOrder.order_id == order.order_id
+      );
+      if (index == -1) {
+        groupedOrders.push({
+          order_id: order.order_id,
+          orders: [order],
+        });
+      } else {
+        groupedOrders[index].orders.push(order);
+      }
+    });
+
+    // filter for status key
+    groupedOrders.forEach((groupedOrder) => {
+      const filteredOrders = groupedOrder.orders.filter((order) => {
+        return order.status_value.status_option.key == statusKey;
+      });
+      groupedOrder.orders = filteredOrders;
+    });
+
+    //remove empty groups
+    const filteredGroupedOrders = groupedOrders.filter((groupedOrder) => {
+      return groupedOrder.orders.length > 0;
+    });
+
+    setBulkOrders(filteredGroupedOrders);
+    const bulkOrderSummaries = [];
+    filteredGroupedOrders.forEach((groupedOrder) => {
+      //count total bulkOrders with order_id equal to groupedOrder.order_id
+      const totalBulkOrders = bulkOrders.filter((order) => {
+        return order.order_id == groupedOrder.order_id;
+      });
+
+      // const orderSummary = `${groupedOrder.order_id} - (${groupedOrder.orders.length}/${totalBulkOrders.length})`;
+      if (groupedOrder.orders.length == totalBulkOrders.length) return;
+      const orderSummary = {
+        order_id: groupedOrder.order_id,
+        order: groupedOrder.orders[0].bulk_order,
+        count: `${groupedOrder.orders.length}/${totalBulkOrders.length}`,
+      };
+
+      console.log(groupedOrders);
+      bulkOrderSummaries.push(orderSummary);
+    });
+    setBulkOrdersSummary(bulkOrderSummaries);
+  };
+
+  const shouldHideSingleBulkOrders = ["DL", "IR"];
+
+  useEffect(() => {
+    if (orders.length > 0) {
+      groupBulkOrders(orders);
+    }
+  }, [orders]);
 
   useEffect(() => {
     if (resize.length > 0) {
@@ -118,80 +183,126 @@ export default function StatusSection({
               className={isLargerThanContainer ? "marquee" : ""}
               ref={dataRef}
             >
-              {filteredOrders.map((order) => {
-                const modelInfo = JSON.parse(order.model_info);
-                const details = JSON.parse(order.details);
-                const isBulk = order.bulk_order != null;
-                let orderDetails = order.order;
-                if (isBulk) {
-                  orderDetails = order.bulk_order;
-                }
-                const statusDate = DateTime.fromSQL(
-                  order.status_value.created_at
-                );
-                const now = DateTime.now();
-                const diff = Math.ceil(
-                  now.diff(statusDate, ["days"]).toObject().days
-                );
-                let background = "bg-white";
-                let orderIdColor = "text-black";
-                switch (diff) {
-                  case 0:
-                    background = "bg-white";
-                    break;
-                  case 1:
-                    background = "bg-white";
-                    break;
-                  case 2:
-                    background = "bg-yellow-100";
-                    orderIdColor = "text-yellow-800";
-                    break;
-                  case 3:
-                    background = "bg-orange-100";
-                    orderIdColor = "text-orange-800";
-                    break;
-                  default:
-                    background = "bg-red-100";
-                    orderIdColor = "text-red-800";
-                    break;
-                }
-                let orderString = order.model_desc;
-                if (orderString.length > 50) {
-                  orderString = order.model_desc.substr(0, 50) + "\u2026";
-                }
-                return (
-                  <React.Fragment key={order.id}>
-                    {order.status_value.status_option.key == statusKey && (
+              {shouldHideSingleBulkOrders.includes(statusKey) &&
+                bulkOrdersSummary.map((orderSummary) => {
+                  console.log(orderSummary);
+                  return (
+                    <React.Fragment key={orderSummary.count}>
                       <div
-                        className={`${background} mb-1 flex justify-between rounded py-0.5 px-2 shadow-sm`}
+                        className={`mb-1 flex justify-between rounded bg-purple-100 py-0.5 px-2 shadow-sm`}
                       >
                         <div>
                           <span>
-                            {modelInfo.working_status == "working" ? (
-                              <span
-                                className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-emerald-800 text-xs font-medium"
-                                style={{ marginBottom: "1px" }}
-                              ></span>
-                            ) : (
-                              <span
-                                className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-red-800 text-xs font-medium"
-                                style={{ marginBottom: "1px" }}
-                              ></span>
-                            )}
+                            <span
+                              className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-purple-500 text-xs font-medium"
+                              style={{ marginBottom: "1px" }}
+                            ></span>
                           </span>
                           <span
-                            className={`${orderIdColor} inline-block text-sm font-bold`}
+                            className={`inline-block text-sm font-bold text-black`}
                           >
-                            {order.id}
+                            {orderSummary.order_id}
                           </span>{" "}
                           &#x2022;{" "}
-                          <span className="text-sm">{orderString}</span>
-                          <br />
+                          <span className="font-bold">
+                            {orderSummary.order.company ? (
+                              <>{orderSummary.order.company}</>
+                            ) : (
+                              <>
+                                {orderSummary.order.first_name}{" "}
+                                {orderSummary.order.last_name}
+                              </>
+                            )}
+                          </span>
                         </div>
-                        <span>
-                          {isBulk ? (
-                            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800">
-                              {/* {orderDetails.company ? (
+                        <span className="inline-flex items-center whitespace-nowrap rounded-full bg-purple-300 px-2.5 py-0.5 text-xs font-medium text-black">
+                          {orderSummary.count}
+                        </span>
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
+              <>
+                {filteredOrders.map((order) => {
+                  if (
+                    shouldHideSingleBulkOrders.includes(statusKey) &&
+                    order.bulk_order != null
+                  ) {
+                    return null;
+                  }
+                  const modelInfo = JSON.parse(order.model_info);
+                  const details = JSON.parse(order.details);
+                  const isBulk = order.bulk_order != null;
+                  let orderDetails = order.order;
+                  if (isBulk) {
+                    orderDetails = order.bulk_order;
+                  }
+                  const statusDate = DateTime.fromSQL(
+                    order.status_value.created_at
+                  );
+                  const now = DateTime.now();
+                  const diff = Math.ceil(
+                    now.diff(statusDate, ["days"]).toObject().days
+                  );
+                  let background = "bg-white";
+                  let orderIdColor = "text-black";
+                  switch (diff) {
+                    case 0:
+                      background = "bg-white";
+                      break;
+                    case 1:
+                      background = "bg-white";
+                      break;
+                    case 2:
+                      background = "bg-yellow-100";
+                      orderIdColor = "text-yellow-800";
+                      break;
+                    case 3:
+                      background = "bg-orange-100";
+                      orderIdColor = "text-orange-800";
+                      break;
+                    default:
+                      background = "bg-red-100";
+                      orderIdColor = "text-red-800";
+                      break;
+                  }
+                  let orderString = order.model_desc;
+                  if (orderString.length > 50) {
+                    orderString = order.model_desc.substr(0, 50) + "\u2026";
+                  }
+                  return (
+                    <React.Fragment key={order.id}>
+                      {order.status_value.status_option.key == statusKey && (
+                        <div
+                          className={`${background} mb-1 flex justify-between rounded py-0.5 px-2 shadow-sm`}
+                        >
+                          <div>
+                            <span>
+                              {modelInfo.working_status == "working" ? (
+                                <span
+                                  className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-emerald-800 text-xs font-medium"
+                                  style={{ marginBottom: "1px" }}
+                                ></span>
+                              ) : (
+                                <span
+                                  className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-red-800 text-xs font-medium"
+                                  style={{ marginBottom: "1px" }}
+                                ></span>
+                              )}
+                            </span>
+                            <span
+                              className={`${orderIdColor} inline-block text-sm font-bold`}
+                            >
+                              {order.id}
+                            </span>{" "}
+                            &#x2022;{" "}
+                            <span className="text-sm">{orderString}</span>
+                            <br />
+                          </div>
+                          <span>
+                            {isBulk ? (
+                              <span className="inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800">
+                                {/* {orderDetails.company ? (
                                 <>{orderDetails.company}</>
                               ) : (
                                 <>
@@ -199,20 +310,21 @@ export default function StatusSection({
                                   {orderDetails.last_name}
                                 </>
                               )} */}
-                              {orderDetails.id}
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-800">
-                              {/* {orderDetails.first_name} {orderDetails.last_name} */}
-                              {orderDetails.id}
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+                                {orderDetails.id}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center whitespace-nowrap rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-800">
+                                {/* {orderDetails.first_name} {orderDetails.last_name} */}
+                                {orderDetails.id}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </>
             </div>
           ) : (
             <div
@@ -220,7 +332,6 @@ export default function StatusSection({
               ref={dataRef}
             >
               {orders.map((order) => {
-                console.log(order);
                 return (
                   <React.Fragment key={order.id}>
                     <div
@@ -242,7 +353,7 @@ export default function StatusSection({
                         <br />
                       </div>
                       <span>
-                        <span className="inline-flex items-center whitespace-nowrap rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+                        <span className="inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800">
                           {order.custom.company ? (
                             <>{order.custom.company}</>
                           ) : (

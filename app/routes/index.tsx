@@ -164,7 +164,11 @@ export default function Index() {
 
   return (
     <main className="relative min-h-screen bg-white sm:flex sm:items-center sm:justify-center">
-      <div className="grid-container grid w-3/4 grid-cols-3 gap-0">
+      <div
+        className={`grid-container grid ${
+          custom.length > 1 ? "w-3/4" : "w-full"
+        } grid-cols-3 gap-0`}
+      >
         <StatusSection
           color="bg-emerald-50"
           orders={orders}
@@ -202,7 +206,7 @@ export default function Index() {
           statusOptions={status_options}
         />
       </div>
-      <div className="h-screen w-1/4">
+      <div className={`h-screen ${custom.length > 1 ? "w-1/4" : "hidden"}`}>
         <StatusSection
           color="bg-sky-100"
           fullHeight={true}
