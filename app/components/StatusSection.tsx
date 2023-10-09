@@ -39,6 +39,7 @@ export default function StatusSection({
     const bulkOrders = orders.filter((order) => {
       return order.bulk_order != null;
     });
+
     //group bulk orders by order_id
     bulkOrders.forEach((order) => {
       const index = groupedOrders.findIndex(
@@ -75,15 +76,12 @@ export default function StatusSection({
         return order.order_id == groupedOrder.order_id;
       });
 
-      // const orderSummary = `${groupedOrder.order_id} - (${groupedOrder.orders.length}/${totalBulkOrders.length})`;
-      if (groupedOrder.orders.length == totalBulkOrders.length) return;
       const orderSummary = {
         order_id: groupedOrder.order_id,
         order: groupedOrder.orders[0].bulk_order,
         count: `${groupedOrder.orders.length}/${totalBulkOrders.length}`,
       };
 
-      console.log(groupedOrders);
       bulkOrderSummaries.push(orderSummary);
     });
     setBulkOrdersSummary(bulkOrderSummaries);
