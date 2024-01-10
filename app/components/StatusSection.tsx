@@ -87,7 +87,7 @@ export default function StatusSection({
     setBulkOrdersSummary(bulkOrderSummaries);
   };
 
-  const shouldHideSingleBulkOrders = ["DL", "IR"];
+  const shouldHideSingleBulkOrders = ["DL", "IR", "AW", "PN"];
 
   useEffect(() => {
     if (orders.length > 0) {
