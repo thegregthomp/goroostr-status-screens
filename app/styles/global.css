@@ -1,6 +1,14 @@
 .grid-container > div {
   height: 50vh;
 }
+@media screen and (orientation: portrait) {
+  .grid-container > div {
+    height: 33.333vh;
+  }
+  .main-grid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .grid-container{
   
 }

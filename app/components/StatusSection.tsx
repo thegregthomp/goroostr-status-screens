@@ -183,7 +183,6 @@ export default function StatusSection({
             >
               {shouldHideSingleBulkOrders.includes(statusKey) &&
                 bulkOrdersSummary.map((orderSummary) => {
-                  console.log(orderSummary);
                   return (
                     <React.Fragment key={orderSummary.count}>
                       <div
@@ -244,26 +243,26 @@ export default function StatusSection({
                   );
                   let background = "bg-white";
                   let orderIdColor = "text-black";
-                  switch (diff) {
-                    case 0:
-                      background = "bg-white";
-                      break;
-                    case 1:
-                      background = "bg-white";
-                      break;
-                    case 2:
-                      background = "bg-yellow-100";
-                      orderIdColor = "text-yellow-800";
-                      break;
-                    case 3:
-                      background = "bg-orange-100";
-                      orderIdColor = "text-orange-800";
-                      break;
-                    default:
-                      background = "bg-red-100";
-                      orderIdColor = "text-red-800";
-                      break;
-                  }
+                  // switch (diff) {
+                  //   case 0:
+                  //     background = "bg-white";
+                  //     break;
+                  //   case 1:
+                  //     background = "bg-white";
+                  //     break;
+                  //   case 2:
+                  //     background = "bg-yellow-100";
+                  //     orderIdColor = "text-yellow-800";
+                  //     break;
+                  //   case 3:
+                  //     background = "bg-orange-100";
+                  //     orderIdColor = "text-orange-800";
+                  //     break;
+                  //   default:
+                  //     background = "bg-red-100";
+                  //     orderIdColor = "text-red-800";
+                  //     break;
+                  // }
                   let orderString = order.model_desc;
                   if (orderString.length > 50) {
                     orderString = order.model_desc.substr(0, 50) + "\u2026";

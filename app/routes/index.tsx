@@ -10,6 +10,8 @@ import Pusher from "pusher-js";
 import sortBy from "lodash/sortBy";
 import indexOf from "lodash/indexOf";
 import { useInterval } from "usehooks-ts";
+import { set } from "cypress/types/lodash";
+import useResizeObserver from "use-resize-observer";
 
 export function links() {
   // `links` returns an array of objects whose
@@ -28,6 +30,16 @@ export default function Index() {
   const [channel, setChannel] = useState(null);
   const [shouldReset, setShouldReset] = useState(true);
   const [pusher, setPusher] = useState(null);
+  const [orientation, setOrientation] = useState("portrait");
+
+  const { ref, width = 1, height = 1 } = useResizeObserver<HTMLDivElement>();
+  useEffect(() => {
+    if (window && window.matchMedia("(orientation: portrait)").matches) {
+      setOrientation("portrait");
+    } else {
+      setOrientation("landscape");
+    }
+  }, [width, height]);
 
   useEffect(() => {
     if (shouldReset) {
@@ -110,7 +122,7 @@ export default function Index() {
     const { data, custom } = await response.json();
     setOrders(data);
     setCustomOrders(custom);
-  }, 60000);
+  }, 10000);
 
   const pluck = (property) => (element) => element[property];
 
@@ -133,12 +145,12 @@ export default function Index() {
       console.log(
         "============================ORDER UPDATE============================"
       );
-      console.log(response);
+
       setOrders((orders) => {
         const data = response;
 
         const newOrders = [...orders];
-        console.log(data);
+
         data.quotes.forEach((order, i) => {
           const orderChange = order;
           const orderIndex = orders.findIndex(
@@ -163,59 +175,121 @@ export default function Index() {
   if (!channel) return null;
 
   return (
-    <main className="relative min-h-screen bg-white sm:flex sm:items-center sm:justify-center">
-      <div
-        className={`grid-container grid ${
-          custom.length > 1 ? "w-3/4" : "w-full"
-        } grid-cols-3 gap-0`}
-      >
-        <StatusSection
-          color="bg-emerald-50"
-          orders={orders}
-          statusKey={"OD"}
-          statusOptions={status_options}
-        />
-        <StatusSection
-          color="bg-emerald-200"
-          orders={orders}
-          statusKey={"IP"}
-          statusOptions={status_options}
-        />
-        <StatusSection
-          color="bg-emerald-400"
-          orders={orders}
-          statusKey={"PN"}
-          statusOptions={status_options}
-        />
-        <StatusSection
-          color="bg-emerald-100"
-          orders={orders}
-          statusKey={"DL"}
-          statusOptions={status_options}
-        />
-        <StatusSection
-          color="bg-emerald-300"
-          orders={orders}
-          statusKey={"IR"}
-          statusOptions={status_options}
-        />
-        <StatusSection
-          color="bg-emerald-500"
-          orders={orders}
-          statusKey={"AW"}
-          statusOptions={status_options}
-        />
-      </div>
-      <div className={`h-screen ${custom.length > 1 ? "w-1/4" : "hidden"}`}>
-        <StatusSection
-          color="bg-sky-100"
-          fullHeight={true}
-          orders={custom}
-          isCustom
-          titleOverride={"Custom Orders"}
-          statusOptions={status_options}
-        />
-      </div>
+    <main
+      className="relative min-h-screen bg-white sm:flex sm:items-center sm:justify-center"
+      ref={ref}
+    >
+      {orientation === "landscape" ? (
+        <>
+          <div
+            className={`grid-container main-grid grid ${
+              custom.length > 1 ? "w-3/4" : "w-full"
+            } grid-cols-3 gap-0`}
+          >
+            <StatusSection
+              color="bg-emerald-50"
+              orders={orders}
+              statusKey={"OD"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-200"
+              orders={orders}
+              statusKey={"IP"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-400"
+              orders={orders}
+              statusKey={"PN"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-100"
+              orders={orders}
+              statusKey={"DL"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-300"
+              orders={orders}
+              statusKey={"IR"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-500"
+              orders={orders}
+              statusKey={"AW"}
+              statusOptions={status_options}
+            />
+          </div>
+          <div className={`h-screen ${custom.length > 1 ? "w-1/4" : "hidden"}`}>
+            <StatusSection
+              color="bg-sky-100"
+              fullHeight={true}
+              orders={custom}
+              isCustom
+              titleOverride={"Custom Orders"}
+              statusOptions={status_options}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <div
+            className={`grid-container main-grid grid ${
+              custom.length > 1 ? "w-3/4" : "w-full"
+            } grid-cols-2 gap-0`}
+          >
+            <StatusSection
+              color="bg-emerald-50"
+              orders={orders}
+              statusKey={"OD"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-100"
+              orders={orders}
+              statusKey={"DL"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-200"
+              orders={orders}
+              statusKey={"IP"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-300"
+              orders={orders}
+              statusKey={"IR"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-400"
+              orders={orders}
+              statusKey={"PN"}
+              statusOptions={status_options}
+            />
+            <StatusSection
+              color="bg-emerald-500"
+              orders={orders}
+              statusKey={"AW"}
+              statusOptions={status_options}
+            />
+          </div>
+          <div className={`h-screen ${custom.length > 1 ? "w-1/4" : "hidden"}`}>
+            <StatusSection
+              color="bg-sky-100"
+              fullHeight={true}
+              orders={custom}
+              isCustom
+              titleOverride={"Custom Orders"}
+              statusOptions={status_options}
+            />
+          </div>
+        </>
+      )}
     </main>
   );
 }
