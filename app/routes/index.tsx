@@ -231,6 +231,7 @@ export default function Index() {
               isCustom
               titleOverride={"Custom Orders"}
               statusOptions={status_options}
+              orientation={orientation}
             />
           </div>
         </>
@@ -286,6 +287,7 @@ export default function Index() {
               isCustom
               titleOverride={"Custom Orders"}
               statusOptions={status_options}
+              orientation={orientation}
             />
           </div>
         </>

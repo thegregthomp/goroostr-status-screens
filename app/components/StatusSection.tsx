@@ -11,12 +11,14 @@ export default function StatusSection({
   fullHeight,
   titleOverride,
   isCustom,
+  orientation = null,
 }: {
   section: String;
   color: String;
   fullHeight: Boolean;
   titleOverride: String;
   isCustom: Boolean;
+  orientation: String;
 }): React.ReactElement {
   const resize = useResize();
   const refContainer = useRef(null);
@@ -329,10 +331,21 @@ export default function StatusSection({
               ref={dataRef}
             >
               {orders.map((order) => {
+                const customerString = order.custom.company
+                  ? order.custom.company
+                  : `${order.custom.first_name} ${order.custom.last_name}`;
+                const shouldBreakLine =
+                  customerString.length > 8 || orientation === "portrait";
+                if (orientation) {
+                  console.log(shouldBreakLine, orientation);
+                }
+
                 return (
                   <React.Fragment key={order.id}>
                     <div
-                      className={`mb-1 flex justify-between rounded bg-white py-0.5 px-2 shadow-sm`}
+                      className={`mb-1 flex justify-between rounded bg-white py-0.5 px-2 shadow-sm ${
+                        shouldBreakLine ? "flex-col" : "flex-row"
+                      }`}
                     >
                       <div>
                         <span
@@ -350,14 +363,12 @@ export default function StatusSection({
                         <br />
                       </div>
                       <span>
-                        <span className="inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800">
-                          {order.custom.company ? (
-                            <>{order.custom.company}</>
-                          ) : (
-                            <>
-                              {order.custom.first_name} {order.custom.last_name}
-                            </>
-                          )}
+                        <span
+                          className={`inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800 ${
+                            shouldBreakLine ? "mb-2" : "mb-0"
+                          }`}
+                        >
+                          {customerString}
                         </span>
                       </span>
                     </div>
