@@ -26,6 +26,7 @@ export default function StatusSection({
   const [animationConfig, setAnimationConfig] = useState({} as any);
   const [bulkOrders, setBulkOrders] = useState([]) as any;
   const [bulkOrdersSummary, setBulkOrdersSummary] = useState([]) as any;
+  const [customOrders, setCustomOrders] = useState([]) as any;
   // const [styles, setStyles] = useState({});
   const dataRef = useRef(null);
 
@@ -88,6 +89,40 @@ export default function StatusSection({
     });
     setBulkOrdersSummary(bulkOrderSummaries);
   };
+
+  const groupCustomOrders = (orders) => {
+    const groupedOrders = [];
+    const customOrders = orders.filter((order) => {
+      return order.custom != null;
+    });
+
+    //group custom orders by order_id
+    customOrders.forEach((order) => {
+      const index = groupedOrders.findIndex(
+        (groupedOrder) => groupedOrder.order_id == order.order_id
+      );
+      if (index == -1) {
+        groupedOrders.push({
+          order_id: order.order_id,
+          orders: [order],
+          company: order.custom.company,
+          first_name: order.custom.first_name,
+          last_name: order.custom.last_name,
+        });
+      } else {
+        groupedOrders[index].orders.push(order);
+      }
+    });
+
+    setCustomOrders(groupedOrders);
+    // console.log("custom orders", customOrders);
+  };
+
+  useEffect(() => {
+    if (orders.length > 0) {
+      groupCustomOrders(orders);
+    }
+  }, [orders]);
 
   const shouldHideSingleBulkOrders = ["DL", "IR", "AW", "PN"];
 
@@ -314,7 +349,7 @@ export default function StatusSection({
                             ) : (
                               <span className="inline-flex items-center whitespace-nowrap rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-800">
                                 {/* {orderDetails.first_name} {orderDetails.last_name} */}
-                                {orderDetails.id}
+                                {orderDetails?.id}
                               </span>
                             )}
                           </span>
@@ -330,45 +365,36 @@ export default function StatusSection({
               className={isLargerThanContainer ? "marquee" : ""}
               ref={dataRef}
             >
-              {orders.map((order) => {
-                const customerString = order.custom.company
-                  ? order.custom.company
-                  : `${order.custom.first_name} ${order.custom.last_name}`;
-                const shouldBreakLine =
-                  customerString.length > 8 || orientation === "portrait";
-                if (orientation) {
-                  console.log(shouldBreakLine, orientation);
-                }
-
+              {customOrders.map((order) => {
                 return (
                   <React.Fragment key={order.id}>
                     <div
-                      className={`mb-1 flex justify-between rounded bg-white py-0.5 px-2 shadow-sm ${
-                        shouldBreakLine ? "flex-col" : "flex-row"
-                      }`}
+                      className={`mb-1 flex justify-between rounded bg-white py-0.5 px-2 shadow-sm`}
                     >
                       <div>
                         <span
                           className={`$text-black inline-block text-sm font-bold`}
                         >
-                          {order.order_id}-{order.id}
+                          {order.order_id}
                         </span>{" "}
                         &#x2022;{" "}
                         <span className="text-sm">
-                          {order.description}{" "}
-                          <span className="text-xs font-bold text-gray-400">
-                            ({order.status_value.status_option.key})
-                          </span>
+                          {order.company ? (
+                            <>{order.company}</>
+                          ) : (
+                            <>
+                              {order.first_name} {order.last_name}
+                            </>
+                          )}{" "}
+                          <span className="text-xs font-bold text-gray-400"></span>
                         </span>
                         <br />
                       </div>
                       <span>
                         <span
-                          className={`inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800 ${
-                            shouldBreakLine ? "mb-2" : "mb-0"
-                          }`}
+                          className={`inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800`}
                         >
-                          {customerString}
+                          {order.orders.length}
                         </span>
                       </span>
                     </div>
