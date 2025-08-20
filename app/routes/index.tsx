@@ -414,9 +414,80 @@ export default function Index() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={closeModal}>
           <div className="bg-white rounded-lg p-6 max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">
-                {selectedOrderGroup ? `${selectedOrderGroup.groupType} Order Group #${selectedOrderGroup.order_id}` : `Order #${selectedOrder?.id}`}
-              </h2>
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-bold">
+                  {selectedOrderGroup ? (
+                    `${selectedOrderGroup.groupType} Order Group #${selectedOrderGroup.order_id}`
+                  ) : (
+                    <>
+                      {selectedOrder.custom ? (
+                        <a 
+                          href={`https://api.goroostr.com/nova/resources/custom-order-items/${selectedOrder?.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-purple-600 hover:text-purple-800 hover:underline"
+                        >
+                          Item #{selectedOrder?.id}
+                        </a>
+                      ) : (
+                        <a 
+                          href={`https://api.goroostr.com/nova/resources/quotes/${selectedOrder?.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-green-600 hover:text-green-800 hover:underline"
+                        >
+                          Item #{selectedOrder?.id}
+                        </a>
+                      )}
+                      {selectedOrder && (
+                        <div className="text-lg flex items-center gap-4">
+                          {/* Order Number Link */}
+                          {selectedOrder.custom ? (
+                            <a 
+                              href={`https://api.goroostr.com/nova/resources/customs/${selectedOrder.custom.id || selectedOrder.custom_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-orange-600 hover:text-orange-800 hover:underline"
+                            >
+                              Custom Order #{selectedOrder.custom.id || selectedOrder.custom_id}
+                            </a>
+                          ) : selectedOrder.bulk_order ? (
+                            <a 
+                              href={`https://api.goroostr.com/nova/resources/bulk-orders/${selectedOrder.bulk_order.id || selectedOrder.bulk_order_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                            >
+                              Bulk Order #{selectedOrder.bulk_order.id || selectedOrder.bulk_order_id}
+                            </a>
+                          ) : selectedOrder.order ? (
+                            <a 
+                              href={`https://api.goroostr.com/nova/resources/orders/${selectedOrder.order.id || selectedOrder.order_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-teal-600 hover:text-teal-800 hover:underline"
+                            >
+                              Order #{selectedOrder.order.id || selectedOrder.order_id}
+                            </a>
+                          ) : null}
+
+                          {/* Order Item Link */}
+                          {selectedOrder.order_item_id && (
+                            <a 
+                              href={`https://api.goroostr.com/nova/resources/order-items/${selectedOrder.order_item_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 hover:underline"
+                            >
+                              Order Item #{selectedOrder.order_item_id}
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </h2>
+              </div>
               <button onClick={closeModal} className="text-gray-500 hover:text-gray-700 text-3xl">
                 ×
               </button>
