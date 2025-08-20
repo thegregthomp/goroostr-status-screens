@@ -40,8 +40,65 @@ export default function Index() {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedOrderGroup, setSelectedOrderGroup] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
 
+  // All hooks must be called before any conditional returns
   const { ref, width = 1, height = 1 } = useResizeObserver<HTMLDivElement>();
+
+  // Check for existing session on component mount
+  useEffect(() => {
+    const authCookie = document.cookie
+      .split('; ')
+      .find(row => row.startsWith('status_auth='));
+    
+    if (authCookie) {
+      const authData = authCookie.split('=')[1];
+      try {
+        const { expires } = JSON.parse(decodeURIComponent(authData));
+        if (new Date(expires) > new Date()) {
+          setIsAuthenticated(true);
+        } else {
+          // Cookie expired, remove it
+          document.cookie = 'status_auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        }
+      } catch (e) {
+        // Invalid cookie, remove it
+        document.cookie = 'status_auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+      }
+    }
+  }, []);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const correctPassword = "goroostr2024"; // Simple password - should be env var in production
+    
+    if (password === correctPassword) {
+      // Set authentication cookie for 30 days
+      const expirationDate = new Date();
+      expirationDate.setDate(expirationDate.getDate() + 30);
+      
+      const authData = {
+        authenticated: true,
+        expires: expirationDate.toISOString()
+      };
+      
+      document.cookie = `status_auth=${encodeURIComponent(JSON.stringify(authData))}; expires=${expirationDate.toUTCString()}; path=/;`;
+      setIsAuthenticated(true);
+      setAuthError("");
+    } else {
+      setAuthError("Incorrect password");
+      setPassword("");
+    }
+  };
+
+  const handleLogout = () => {
+    document.cookie = 'status_auth=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+    setIsAuthenticated(false);
+  };
   useEffect(() => {
     if (window && window.matchMedia("(orientation: portrait)").matches) {
       setOrientation("portrait");
@@ -205,6 +262,46 @@ export default function Index() {
       });
     });
   }, [channel, sortAndOrder, status_options]);
+
+  // Show login form if not authenticated (must be after all hooks)
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+          <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">
+            Status Screen Access
+          </h2>
+          <form onSubmit={handleLogin}>
+            <div className="mb-4">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                id="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Enter password"
+                required
+              />
+            </div>
+            {authError && (
+              <div className="mb-4 text-red-600 text-sm">
+                {authError}
+              </div>
+            )}
+            <button
+              type="submit"
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+            >
+              Access Status Screen
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   if (!channel) return null;
 
@@ -402,10 +499,17 @@ export default function Index() {
           </div>
         </div>
         
-        <div className="text-center">
+        <div className="text-center space-y-2">
           <div className="text-lg font-bold">
             {currentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).replace(' AM', '').replace(' PM', '')}
           </div>
+          <button
+            onClick={handleLogout}
+            className="text-xs text-gray-400 hover:text-white transition-colors"
+            title="Logout"
+          >
+            ⚠
+          </button>
         </div>
       </div>
 
