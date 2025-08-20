@@ -12,6 +12,8 @@ export default function StatusSection({
   titleOverride,
   isCustom,
   orientation = null,
+  onOrderClick,
+  onGroupClick,
 }: {
   section: String;
   color: String;
@@ -19,6 +21,8 @@ export default function StatusSection({
   titleOverride: String;
   isCustom: Boolean;
   orientation: String;
+  onOrderClick: Function;
+  onGroupClick: Function;
 }): React.ReactElement {
   const resize = useResize();
   const refContainer = useRef(null);
@@ -300,7 +304,8 @@ export default function StatusSection({
                 return (
                   <React.Fragment key={orderSummary.count}>
                     <div
-                      className={`mb-1 flex justify-between rounded bg-purple-100 py-0.5 px-2 shadow-sm`}
+                      className={`mb-1 flex justify-between rounded bg-purple-100 py-0.5 px-2 shadow-sm cursor-pointer hover:bg-purple-200 transition-colors`}
+                      onClick={() => onGroupClick(bulkOrders.find(group => group.order_id === orderSummary.order_id), 'Bulk')}
                     >
                       <div>
                         <span>
@@ -338,7 +343,8 @@ export default function StatusSection({
                 return (
                   <React.Fragment key={orderSummary.count}>
                     <div
-                      className={`mb-1 flex justify-between rounded bg-blue-100 py-0.5 px-2 shadow-sm`}
+                      className={`mb-1 flex justify-between rounded bg-blue-100 py-0.5 px-2 shadow-sm cursor-pointer hover:bg-blue-200 transition-colors`}
+                      onClick={() => onGroupClick(customOrders.find(group => group.order_id === orderSummary.order_id), 'Custom')}
                     >
                       <div>
                         <span>
@@ -446,7 +452,8 @@ export default function StatusSection({
                   <React.Fragment key={order.id}>
                     {order.status_value.status_option.key == statusKey && (
                       <div
-                        className={`${background} mb-1 flex justify-between rounded py-0.5 px-2 shadow-sm`}
+                        className={`${background} mb-1 flex justify-between rounded py-0.5 px-2 shadow-sm cursor-pointer hover:bg-gray-100 transition-colors`}
+                        onClick={() => onOrderClick(order)}
                       >
                         <div>
                           <span>

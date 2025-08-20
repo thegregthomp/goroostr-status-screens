@@ -37,6 +37,9 @@ export default function Index() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [connectionStatus, setConnectionStatus] = useState("connecting");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [selectedOrderGroup, setSelectedOrderGroup] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const { ref, width = 1, height = 1 } = useResizeObserver<HTMLDivElement>();
   useEffect(() => {
@@ -229,6 +232,25 @@ export default function Index() {
     }
   };
 
+  // Modal handlers
+  const handleOrderClick = (order) => {
+    setSelectedOrder(order);
+    setSelectedOrderGroup(null);
+    setIsModalOpen(true);
+  };
+
+  const handleGroupClick = (orderGroup, groupType) => {
+    setSelectedOrderGroup({ ...orderGroup, groupType });
+    setSelectedOrder(null);
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setSelectedOrder(null);
+    setSelectedOrderGroup(null);
+  };
+
   return (
     <main
       className="relative min-h-screen bg-white flex"
@@ -246,36 +268,48 @@ export default function Index() {
               orders={orders}
               statusKey={"OD"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-200"
               orders={orders}
               statusKey={"IP"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-400"
               orders={orders}
               statusKey={"PN"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-100"
               orders={orders}
               statusKey={"DL"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-300"
               orders={orders}
               statusKey={"IR"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-500"
               orders={orders}
               statusKey={"AW"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
           </div>
         </>
@@ -289,36 +323,48 @@ export default function Index() {
               orders={orders}
               statusKey={"OD"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-100"
               orders={orders}
               statusKey={"DL"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-200"
               orders={orders}
               statusKey={"IP"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-300"
               orders={orders}
               statusKey={"IR"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-400"
               orders={orders}
               statusKey={"PN"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
             <StatusSection
               color="bg-emerald-500"
               orders={orders}
               statusKey={"AW"}
               statusOptions={status_options}
+              onOrderClick={handleOrderClick}
+              onGroupClick={handleGroupClick}
             />
           </div>
         </>
@@ -362,6 +408,348 @@ export default function Index() {
           </div>
         </div>
       </div>
+
+      {/* Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={closeModal}>
+          <div className="bg-white rounded-lg p-6 max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold">
+                {selectedOrderGroup ? `${selectedOrderGroup.groupType} Order Group #${selectedOrderGroup.order_id}` : `Order #${selectedOrder?.id}`}
+              </h2>
+              <button onClick={closeModal} className="text-gray-500 hover:text-gray-700 text-3xl">
+                ×
+              </button>
+            </div>
+            
+            {selectedOrder && (
+              <div className="space-y-6">
+                {/* Order Overview */}
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h3 className="text-lg font-semibold mb-3">Order Overview</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <span className="text-sm text-gray-600">Order ID</span>
+                      <div className="font-semibold">{selectedOrder.id}</div>
+                    </div>
+                    <div>
+                      <span className="text-sm text-gray-600">Current Status</span>
+                      <div className="font-semibold">{selectedOrder.status_value?.status_option?.name}</div>
+                    </div>
+                    <div>
+                      <span className="text-sm text-gray-600">Status Date</span>
+                      <div className="font-semibold">
+                        {selectedOrder.status_value?.created_at ? 
+                          new Date(selectedOrder.status_value.created_at).toLocaleDateString() : 'N/A'}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-sm text-gray-600">Working Status</span>
+                      <div className={`font-semibold ${JSON.parse(selectedOrder.model_info || '{}').working_status === 'working' ? 'text-green-600' : 'text-red-600'}`}>
+                        {JSON.parse(selectedOrder.model_info || '{}').working_status || 'Unknown'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Product Details */}
+                <div className="bg-white border rounded-lg p-4">
+                  <h3 className="text-lg font-semibold mb-3">Product Details</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <span className="text-sm text-gray-600">Description</span>
+                      <div className="font-medium">{selectedOrder.model_desc}</div>
+                    </div>
+                    
+                    {selectedOrder.details && (
+                      <details className="bg-gray-50 rounded-lg p-3">
+                        <summary className="text-sm font-medium text-gray-700 cursor-pointer hover:text-gray-900 select-none">
+                          Additional Details
+                        </summary>
+                        <div className="mt-3 space-y-3">
+                          {(() => {
+                            try {
+                              const details = typeof selectedOrder.details === 'string' ? JSON.parse(selectedOrder.details) : selectedOrder.details;
+                              return Object.entries(details).map(([key, value]) => (
+                                <div key={key} className="flex flex-col sm:flex-row sm:gap-4 py-2 border-b border-gray-200 last:border-b-0">
+                                  <div className="text-xs text-gray-500 sm:w-40 font-semibold uppercase tracking-wide">
+                                    {key.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim()}
+                                  </div>
+                                  <div className="text-sm text-gray-800 flex-1">
+                                    {typeof value === 'boolean' ? (
+                                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                                        value ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                      }`}>
+                                        {value ? 'Yes' : 'No'}
+                                      </span>
+                                    ) : typeof value === 'object' ? (
+                                      <div className="text-xs bg-white p-2 rounded border">
+                                        <pre className="whitespace-pre-wrap">{JSON.stringify(value, null, 2)}</pre>
+                                      </div>
+                                    ) : (
+                                      <span className="font-medium">{String(value)}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              ));
+                            } catch (e) {
+                              return <div className="text-sm text-gray-600">{String(selectedOrder.details)}</div>;
+                            }
+                          })()}
+                        </div>
+                      </details>
+                    )}
+
+                    {selectedOrder.model_info && (
+                      <details className="bg-gray-50 rounded-lg p-3">
+                        <summary className="text-sm font-medium text-gray-700 cursor-pointer hover:text-gray-900 select-none">
+                          Technical Information
+                        </summary>
+                        <div className="mt-3 space-y-3">
+                          {(() => {
+                            try {
+                              const techInfo = JSON.parse(selectedOrder.model_info);
+                              return Object.entries(techInfo).map(([key, value]) => (
+                                <div key={key} className="flex flex-col sm:flex-row sm:gap-4 py-2 border-b border-gray-200 last:border-b-0">
+                                  <div className="text-xs text-gray-500 sm:w-40 font-semibold uppercase tracking-wide">
+                                    {key.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim()}
+                                  </div>
+                                  <div className="text-sm text-gray-800 flex-1">
+                                    {typeof value === 'boolean' ? (
+                                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                                        value ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                      }`}>
+                                        {value ? 'Yes' : 'No'}
+                                      </span>
+                                    ) : typeof value === 'object' ? (
+                                      <div className="text-xs bg-white p-2 rounded border">
+                                        <pre className="whitespace-pre-wrap">{JSON.stringify(value, null, 2)}</pre>
+                                      </div>
+                                    ) : (
+                                      <span className="font-medium">{String(value)}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              ));
+                            } catch (e) {
+                              return <div className="text-sm text-gray-600">Unable to parse technical information</div>;
+                            }
+                          })()}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                </div>
+
+                {/* Customer Information */}
+                {(selectedOrder.custom || selectedOrder.bulk_order || selectedOrder.order) && (
+                  <div className="bg-white border rounded-lg p-4">
+                    <h3 className="text-lg font-semibold mb-3">Customer Information</h3>
+                    {selectedOrder.custom && (
+                      <div className="bg-blue-50 p-3 rounded">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">Custom Order</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="text-gray-600">Customer:</span>
+                            <div className="font-medium">{selectedOrder.custom.company || `${selectedOrder.custom.first_name} ${selectedOrder.custom.last_name}`}</div>
+                          </div>
+                          {selectedOrder.custom.email && (
+                            <div>
+                              <span className="text-gray-600">Email:</span>
+                              <div className="font-medium">{selectedOrder.custom.email}</div>
+                            </div>
+                          )}
+                          {selectedOrder.custom.phone && (
+                            <div>
+                              <span className="text-gray-600">Phone:</span>
+                              <div className="font-medium">{selectedOrder.custom.phone}</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedOrder.bulk_order && (
+                      <div className="bg-purple-50 p-3 rounded">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="bg-purple-100 text-purple-800 text-xs font-medium px-2 py-1 rounded">Bulk Order</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="text-gray-600">Customer:</span>
+                            <div className="font-medium">{selectedOrder.bulk_order.company || `${selectedOrder.bulk_order.first_name} ${selectedOrder.bulk_order.last_name}`}</div>
+                          </div>
+                          {selectedOrder.bulk_order.email && (
+                            <div>
+                              <span className="text-gray-600">Email:</span>
+                              <div className="font-medium">{selectedOrder.bulk_order.email}</div>
+                            </div>
+                          )}
+                          {selectedOrder.bulk_order.phone && (
+                            <div>
+                              <span className="text-gray-600">Phone:</span>
+                              <div className="font-medium">{selectedOrder.bulk_order.phone}</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedOrder.order && !selectedOrder.custom && !selectedOrder.bulk_order && (
+                      <div className="bg-gray-50 p-3 rounded">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2 py-1 rounded">Regular Order</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <span className="text-gray-600">Customer:</span>
+                            <div className="font-medium">{selectedOrder.order.company || `${selectedOrder.order.first_name} ${selectedOrder.order.last_name}`}</div>
+                          </div>
+                          {selectedOrder.order.email && (
+                            <div>
+                              <span className="text-gray-600">Email:</span>
+                              <div className="font-medium">{selectedOrder.order.email}</div>
+                            </div>
+                          )}
+                          {selectedOrder.order.phone && (
+                            <div>
+                              <span className="text-gray-600">Phone:</span>
+                              <div className="font-medium">{selectedOrder.order.phone}</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Notes Section */}
+                {selectedOrder.notes && selectedOrder.notes.length > 0 && (
+                  <div className="bg-white border rounded-lg p-4">
+                    <h3 className="text-lg font-semibold mb-3">Notes</h3>
+                    <div className="space-y-3">
+                      {selectedOrder.notes.map((note, index) => (
+                        <div key={index} className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="text-sm font-medium text-amber-800">
+                                {typeof note.user === 'object' ? note.user?.name || note.user?.email || 'System' : 
+                                 typeof note.author === 'object' ? note.author?.name || note.author?.email || 'System' : 
+                                 note.user || note.author || 'System'}
+                              </div>
+                              {note.tag && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-200 text-amber-800">
+                                  {typeof note.tag === 'object' ? note.tag?.name || note.tag?.label || note.tag : note.tag}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-amber-600">
+                              {note.created_at ? new Date(note.created_at).toLocaleString() : 'Unknown date'}
+                            </div>
+                          </div>
+                          <div className="text-sm text-amber-900">
+                            {note.content || note.note || note.message || note.text || 'No content'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Status History Section */}
+                {selectedOrder.status_history && selectedOrder.status_history.length > 0 && (
+                  <div className="bg-white border rounded-lg p-4">
+                    <h3 className="text-lg font-semibold mb-3">Status History</h3>
+                    <div className="space-y-3">
+                      {selectedOrder.status_history
+                        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+                        .map((status, index) => (
+                        <div key={index} className="flex items-start gap-4 p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-shrink-0">
+                            <div className={`w-3 h-3 rounded-full ${
+                              index === 0 ? 'bg-green-500' : 'bg-gray-400'
+                            }`}></div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start mb-1">
+                              <div className="text-sm font-semibold text-gray-900">
+                                {typeof status.status_option === 'object' ? status.status_option?.name || status.status_option?.label :
+                                 typeof status.status === 'object' ? status.status?.name || status.status?.label :
+                                 status.status_name || status.name || status.status || status.label || 'Unknown Status'}
+                              </div>
+                              <div className="text-xs text-gray-500 ml-2">
+                                {status.created_at ? new Date(status.created_at).toLocaleString() : 'Unknown date'}
+                              </div>
+                            </div>
+                            {status.note && (
+                              <div className="text-sm text-gray-600 mt-1">
+                                {status.note}
+                              </div>
+                            )}
+                            {status.user && (
+                              <div className="text-xs text-gray-500 mt-1">
+                                Changed by: {typeof status.user === 'object' ? status.user?.name || status.user?.email || 'Unknown' : status.user}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Raw Data (for debugging/detailed view) */}
+                <details className="bg-gray-50 border rounded-lg p-4">
+                  <summary className="text-sm font-medium text-gray-600 cursor-pointer hover:text-gray-800">
+                    View Raw Order Data
+                  </summary>
+                  <div className="mt-3 text-xs bg-white p-3 rounded border overflow-auto max-h-60">
+                    <pre className="whitespace-pre-wrap">{JSON.stringify(selectedOrder, null, 2)}</pre>
+                  </div>
+                </details>
+              </div>
+            )}
+
+            {selectedOrderGroup && (
+              <div className="space-y-4">
+                <div className="bg-gray-50 p-3 rounded">
+                  <div className="font-semibold">Group ID: {selectedOrderGroup.order_id}</div>
+                  <div>Customer: {selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.company || `${selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.first_name} ${selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.last_name}`}</div>
+                  <div>Items in group: {selectedOrderGroup.orders.length}</div>
+                </div>
+                
+                <div>
+                  <h3 className="font-semibold mb-2">Items in this group:</h3>
+                  <div className="space-y-2">
+                    {selectedOrderGroup.orders.map((order) => (
+                      <div 
+                        key={order.id} 
+                        className="border p-3 rounded bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                        onClick={() => handleOrderClick(order)}
+                      >
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="font-medium">ID: {order.id}</div>
+                            <div className="text-sm text-gray-600">{order.model_desc}</div>
+                          </div>
+                          <div className="text-sm font-medium text-gray-800">
+                            {order.status_value?.status_option?.name}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-2 text-right">
+                          Click to view details →
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }
