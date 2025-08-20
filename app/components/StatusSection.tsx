@@ -35,6 +35,9 @@ export default function StatusSection({
   // const [styles, setStyles] = useState({});
   const dataRef = useRef(null);
   const animationConfigRef = useRef({});
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const userScrollTimeoutRef = useRef(null);
+  const scrollContainerRef = useRef(null);
 
   const [styles, api] = useSpring(
     () => ({
@@ -203,16 +206,70 @@ export default function StatusSection({
     }
   }, [orders, bulkOrdersSummary, customOrdersSummary]);
 
+  // Handle user scroll events
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) return;
+
+    const handleUserScroll = () => {
+      // User is actively scrolling - pause auto-scroll
+      setIsUserScrolling(true);
+      
+      // Clear existing timeout
+      if (userScrollTimeoutRef.current) {
+        clearTimeout(userScrollTimeoutRef.current);
+      }
+      
+      // Resume auto-scroll after 5 seconds of inactivity
+      userScrollTimeoutRef.current = setTimeout(() => {
+        setIsUserScrolling(false);
+      }, 5000);
+    };
+
+    const handleWheel = (e) => {
+      if (isLargerThanContainer) {
+        e.preventDefault();
+        const scrollAmount = e.deltaY;
+        const currentTransform = styles.y.get();
+        const { dataHeight, containerHeight } = animationConfigRef.current;
+        const maxScroll = -(dataHeight - containerHeight + 25);
+        
+        // Calculate new position
+        const newY = Math.max(maxScroll, Math.min(0, currentTransform - scrollAmount));
+        
+        // Apply immediate scroll
+        api.start({
+          y: newY,
+          config: { duration: 100 }
+        });
+        
+        handleUserScroll();
+      }
+    };
+
+    scrollContainer.addEventListener('wheel', handleWheel, { passive: false });
+    scrollContainer.addEventListener('touchstart', handleUserScroll);
+    scrollContainer.addEventListener('touchmove', handleUserScroll);
+
+    return () => {
+      scrollContainer.removeEventListener('wheel', handleWheel);
+      scrollContainer.removeEventListener('touchstart', handleUserScroll);
+      scrollContainer.removeEventListener('touchmove', handleUserScroll);
+      if (userScrollTimeoutRef.current) {
+        clearTimeout(userScrollTimeoutRef.current);
+      }
+    };
+  }, [api, styles.y, isLargerThanContainer]);
+
   useEffect(() => {
     const interval = setInterval(() => {
-      if (isLargerThanContainer) {
+      if (isLargerThanContainer && !isUserScrolling) {
         const { dataHeight, containerHeight } = animationConfigRef.current;
         const scrollDistance = dataHeight - containerHeight;
 
         // Calculate dynamic duration: minimum 8s, scale with content
         // Formula: 8s base + extra time for longer content (capped at 20s max)
         const dynamicDuration = Math.min(20000, Math.max(8000, 8000 + (scrollDistance / 200) * 1000));
-
 
         api.start({
           config: {
@@ -233,7 +290,7 @@ export default function StatusSection({
       }
     }, 30000);
     return () => clearInterval(interval);
-  }, [api, isLargerThanContainer]);
+  }, [api, isLargerThanContainer, isUserScrolling]);
 
   const filteredOrders = orders
     .filter((order) => {
@@ -292,7 +349,7 @@ export default function StatusSection({
           </span>
         </div>
       )}
-      <div className="relative flex flex-1 flex-col overflow-hidden py-2 px-3">
+      <div className="relative flex flex-1 flex-col overflow-hidden py-2 px-3" ref={scrollContainerRef}>
         <animated.div
           style={{
             ...styles,
