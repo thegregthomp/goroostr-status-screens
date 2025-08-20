@@ -14,7 +14,6 @@ import {
 } from "@remix-run/react";
 
 import tailwindStylesheetUrl from "./styles/tailwind.css";
-import { getUser } from "./session.server";
 
 export const meta: MetaFunction = () => {
   return { title: "New Remix App" };
@@ -25,9 +24,7 @@ export const links: LinksFunction = () => {
 };
 
 export async function loader({ request }: LoaderArgs) {
-  return json({
-    user: await getUser(request),
-  });
+  return json({});
 };
 
 export default function App() {

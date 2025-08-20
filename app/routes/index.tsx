@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import type { LoaderArgs } from "@remix-run/node";
 import StatusSection from "~/components/StatusSection";
-import { useOptionalUser } from "~/utils";
 import { useLoaderData } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import stylesheetUrl from "../styles/global.css";
@@ -10,7 +9,6 @@ import Pusher from "pusher-js";
 import sortBy from "lodash/sortBy";
 import indexOf from "lodash/indexOf";
 import { useInterval } from "usehooks-ts";
-import { set } from "cypress/types/lodash";
 import useResizeObserver from "use-resize-observer";
 
 export function links() {
@@ -20,17 +18,25 @@ export function links() {
 }
 
 export async function loader({ request }: LoaderArgs) {
-  return json(await getOrders());
+  const ordersData = await getOrders();
+  return json({
+    ...ordersData,
+    apiEndpoint: process.env.GOROOSTR_ENDPOINT
+  });
 }
 
 export default function Index() {
-  const { data, custom, status_options } = useLoaderData();
-  const [orders, setOrders] = useState(data);
+  const { data, custom, status_options, apiEndpoint } = useLoaderData();
+  const [orders, setOrders] = useState([...data, ...custom]);
   const [customOrders, setCustomOrders] = useState(custom);
   const [channel, setChannel] = useState(null);
   const [shouldReset, setShouldReset] = useState(true);
   const [pusher, setPusher] = useState(null);
   const [orientation, setOrientation] = useState("portrait");
+  const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [connectionStatus, setConnectionStatus] = useState("connecting");
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { ref, width = 1, height = 1 } = useResizeObserver<HTMLDivElement>();
   useEffect(() => {
@@ -40,6 +46,17 @@ export default function Index() {
       setOrientation("landscape");
     }
   }, [width, height]);
+
+  // Update current time every second
+  useEffect(() => {
+    // Set initial time
+    setCurrentTime(new Date());
+    
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000); // Update every second
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (shouldReset) {
@@ -70,18 +87,23 @@ export default function Index() {
 
       pusher.connection.bind("connected", function () {
         console.log("Pusher Connected");
+        setConnectionStatus("connected");
       });
       pusher.connection.bind("error", function (error) {
         console.error("connection error", error);
+        setConnectionStatus("error");
       });
       pusher.connection.bind("state_change", function (states) {
         console.log("Pusher state change", states);
+        setConnectionStatus(states.current);
       });
       pusher.connection.bind("disconnected", function () {
         console.log("Pusher Disconnected");
+        setConnectionStatus("disconnected");
       });
       pusher.connection.bind("failed", function () {
         console.log("Pusher failed");
+        setConnectionStatus("failed");
       });
     }
     return () => {
@@ -116,12 +138,20 @@ export default function Index() {
   }, 5000);
 
   useInterval(async () => {
-    const response = await fetch(
-      `http://goroostr-api.test/api/get-status-orders`
-    );
-    const { data, custom } = await response.json();
-    setOrders(data);
-    setCustomOrders(custom);
+    setIsRefreshing(true);
+    try {
+      const response = await fetch(
+        `${apiEndpoint}/get-status-orders`
+      );
+      const { data, custom } = await response.json();
+      setOrders([...data, ...custom]);
+      setCustomOrders(custom);
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 500); // Show indicator for at least 500ms
+    }
   }, 10000);
 
   const pluck = (property) => (element) => element[property];
@@ -166,6 +196,7 @@ export default function Index() {
           }
         });
         const sorted = sortAndOrder(newOrders, status_options);
+        setLastUpdated(new Date());
 
         return sorted;
       });
@@ -174,17 +205,41 @@ export default function Index() {
 
   if (!channel) return null;
 
+  // Calculate total orders
+  const totalOrders = orders.length;
+
+  // Format time display  
+  const formatTime = (date) => {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatDate = (date) => {
+    return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  };
+
+  // Connection status indicator
+  const getConnectionColor = () => {
+    switch(connectionStatus) {
+      case 'connected': return 'bg-green-400';
+      case 'connecting': return 'bg-yellow-400';
+      case 'disconnected': 
+      case 'failed':
+      case 'error': return 'bg-red-400';
+      default: return 'bg-gray-400';
+    }
+  };
+
   return (
     <main
-      className="relative min-h-screen bg-white sm:flex sm:items-center sm:justify-center"
+      className="relative min-h-screen bg-white flex"
       ref={ref}
     >
+      {/* Main Content */}
+      <div className="flex items-center justify-center min-h-screen flex-1">
       {orientation === "landscape" ? (
         <>
           <div
-            className={`grid-container main-grid grid ${
-              custom.length > 1 ? "w-3/4" : "w-full"
-            } grid-cols-3 gap-0`}
+            className="grid-container main-grid grid w-full grid-cols-3 gap-0"
           >
             <StatusSection
               color="bg-emerald-50"
@@ -221,26 +276,13 @@ export default function Index() {
               orders={orders}
               statusKey={"AW"}
               statusOptions={status_options}
-            />
-          </div>
-          <div className={`h-screen ${custom.length > 1 ? "w-1/4" : "hidden"}`}>
-            <StatusSection
-              color="bg-sky-100"
-              fullHeight={true}
-              orders={custom}
-              isCustom
-              titleOverride={"Custom Orders"}
-              statusOptions={status_options}
-              orientation={orientation}
             />
           </div>
         </>
       ) : (
         <>
           <div
-            className={`grid-container main-grid grid ${
-              custom.length > 1 ? "w-3/4" : "w-full"
-            } grid-cols-2 gap-0`}
+            className="grid-container main-grid grid w-full grid-cols-2 gap-0"
           >
             <StatusSection
               color="bg-emerald-50"
@@ -279,19 +321,47 @@ export default function Index() {
               statusOptions={status_options}
             />
           </div>
-          <div className={`h-screen ${custom.length > 1 ? "w-1/4" : "hidden"}`}>
-            <StatusSection
-              color="bg-sky-100"
-              fullHeight={true}
-              orders={custom}
-              isCustom
-              titleOverride={"Custom Orders"}
-              statusOptions={status_options}
-              orientation={orientation}
-            />
-          </div>
         </>
       )}
+      </div>
+      
+      {/* Vertical Sidebar */}
+      <div className="w-20 bg-gray-800 bg-opacity-95 backdrop-blur-sm flex flex-col justify-between p-2 text-white">
+        <div className="space-y-2">
+          <div className="flex flex-col items-center gap-1">
+            <div className="flex items-center gap-1">
+              <div className={`w-2 h-2 rounded-full ${getConnectionColor()}`}></div>
+              {isRefreshing && (
+                <div className="w-2 h-2">
+                  <svg className="animate-spin text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                </div>
+              )}
+            </div>
+            <span className="text-xs font-semibold">LIVE</span>
+          </div>
+          
+          <div className="text-xs space-y-2 text-center">
+            <div>
+              <div className="text-gray-300 text-xs">Updated</div>
+              <div className="font-semibold text-xs">{formatTime(lastUpdated)}</div>
+            </div>
+            
+            <div>
+              <div className="text-gray-300 text-xs">Total</div>
+              <div className="font-bold text-sm">{totalOrders}</div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="text-center">
+          <div className="text-lg font-bold">
+            {currentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).replace(' AM', '').replace(' PM', '')}
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
