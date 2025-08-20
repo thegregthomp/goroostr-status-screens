@@ -420,25 +420,36 @@ export default function Index() {
                     `${selectedOrderGroup.groupType} Order Group #${selectedOrderGroup.order_id}`
                   ) : (
                     <>
-                      {selectedOrder.custom ? (
-                        <a 
-                          href={`https://api.goroostr.com/nova/resources/custom-order-items/${selectedOrder?.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-purple-600 hover:text-purple-800 hover:underline"
-                        >
-                          Item #{selectedOrder?.id}
-                        </a>
-                      ) : (
-                        <a 
-                          href={`https://api.goroostr.com/nova/resources/quotes/${selectedOrder?.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-green-600 hover:text-green-800 hover:underline"
-                        >
-                          Item #{selectedOrder?.id}
-                        </a>
-                      )}
+                      <div className="flex items-center gap-3">
+                        {/* Working Status Indicator */}
+                        <div className={`w-3 h-3 rounded-full ${JSON.parse(selectedOrder?.model_info || '{}').working_status === 'working' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                        
+                        {/* Item Link */}
+                        {selectedOrder.custom ? (
+                          <a 
+                            href={`https://api.goroostr.com/nova/resources/custom-order-items/${selectedOrder?.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-purple-600 hover:text-purple-800 hover:underline"
+                          >
+                            Item #{selectedOrder?.id}
+                          </a>
+                        ) : (
+                          <a 
+                            href={`https://api.goroostr.com/nova/resources/quotes/${selectedOrder?.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-green-600 hover:text-green-800 hover:underline"
+                          >
+                            Item #{selectedOrder?.id}
+                          </a>
+                        )}
+                        
+                        {/* Current Status */}
+                        <span className="text-lg text-gray-600">
+                          • {selectedOrder?.status_value?.status_option?.name}
+                        </span>
+                      </div>
                       {selectedOrder && (
                         <div className="text-lg flex items-center gap-4">
                           {/* Order Number Link */}
@@ -499,27 +510,57 @@ export default function Index() {
                 <div className="bg-gray-50 p-4 rounded-lg">
                   <h3 className="text-lg font-semibold mb-3">Order Overview</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* Customer Name */}
                     <div>
-                      <span className="text-sm text-gray-600">Order ID</span>
-                      <div className="font-semibold">{selectedOrder.id}</div>
-                    </div>
-                    <div>
-                      <span className="text-sm text-gray-600">Current Status</span>
-                      <div className="font-semibold">{selectedOrder.status_value?.status_option?.name}</div>
-                    </div>
-                    <div>
-                      <span className="text-sm text-gray-600">Status Date</span>
+                      <span className="text-sm text-gray-600">Customer</span>
                       <div className="font-semibold">
-                        {selectedOrder.status_value?.created_at ? 
-                          new Date(selectedOrder.status_value.created_at).toLocaleDateString() : 'N/A'}
+                        {selectedOrder.custom ? 
+                          (selectedOrder.custom.company || `${selectedOrder.custom.first_name} ${selectedOrder.custom.last_name}`) :
+                          selectedOrder.bulk_order ? 
+                          (selectedOrder.bulk_order.company || `${selectedOrder.bulk_order.first_name} ${selectedOrder.bulk_order.last_name}`) :
+                          selectedOrder.order ? 
+                          (selectedOrder.order.company || `${selectedOrder.order.first_name} ${selectedOrder.order.last_name}`) :
+                          'Unknown Customer'
+                        }
                       </div>
                     </div>
-                    <div>
-                      <span className="text-sm text-gray-600">Working Status</span>
-                      <div className={`font-semibold ${JSON.parse(selectedOrder.model_info || '{}').working_status === 'working' ? 'text-green-600' : 'text-red-600'}`}>
-                        {JSON.parse(selectedOrder.model_info || '{}').working_status || 'Unknown'}
+                    
+                    {/* Pricing - Only show for non-custom orders */}
+                    {!selectedOrder.custom && selectedOrder.value && (
+                      <div>
+                        <span className="text-sm text-gray-600">Quote Value</span>
+                        <div className="font-bold text-green-600">
+                          ${parseFloat(selectedOrder.value).toFixed(2)}
+                        </div>
                       </div>
-                    </div>
+                    )}
+                    
+                    {!selectedOrder.custom && selectedOrder.total && (
+                      <div>
+                        <span className="text-sm text-gray-600">Total</span>
+                        <div className="font-bold text-blue-600">
+                          ${parseFloat(selectedOrder.total).toFixed(2)}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {!selectedOrder.custom && (selectedOrder.discount_amount || selectedOrder.discount) && (
+                      <div>
+                        <span className="text-sm text-gray-600">Discount</span>
+                        <div className="font-semibold text-red-600">
+                          -${parseFloat(selectedOrder.discount_amount || selectedOrder.discount).toFixed(2)}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {!selectedOrder.custom && selectedOrder.tax_amount && (
+                      <div>
+                        <span className="text-sm text-gray-600">Tax</span>
+                        <div className="font-semibold text-gray-800">
+                          ${parseFloat(selectedOrder.tax_amount).toFixed(2)}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -611,90 +652,6 @@ export default function Index() {
                     )}
                   </div>
                 </div>
-
-                {/* Customer Information */}
-                {(selectedOrder.custom || selectedOrder.bulk_order || selectedOrder.order) && (
-                  <div className="bg-white border rounded-lg p-4">
-                    <h3 className="text-lg font-semibold mb-3">Customer Information</h3>
-                    {selectedOrder.custom && (
-                      <div className="bg-blue-50 p-3 rounded">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">Custom Order</span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                          <div>
-                            <span className="text-gray-600">Customer:</span>
-                            <div className="font-medium">{selectedOrder.custom.company || `${selectedOrder.custom.first_name} ${selectedOrder.custom.last_name}`}</div>
-                          </div>
-                          {selectedOrder.custom.email && (
-                            <div>
-                              <span className="text-gray-600">Email:</span>
-                              <div className="font-medium">{selectedOrder.custom.email}</div>
-                            </div>
-                          )}
-                          {selectedOrder.custom.phone && (
-                            <div>
-                              <span className="text-gray-600">Phone:</span>
-                              <div className="font-medium">{selectedOrder.custom.phone}</div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {selectedOrder.bulk_order && (
-                      <div className="bg-purple-50 p-3 rounded">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="bg-purple-100 text-purple-800 text-xs font-medium px-2 py-1 rounded">Bulk Order</span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                          <div>
-                            <span className="text-gray-600">Customer:</span>
-                            <div className="font-medium">{selectedOrder.bulk_order.company || `${selectedOrder.bulk_order.first_name} ${selectedOrder.bulk_order.last_name}`}</div>
-                          </div>
-                          {selectedOrder.bulk_order.email && (
-                            <div>
-                              <span className="text-gray-600">Email:</span>
-                              <div className="font-medium">{selectedOrder.bulk_order.email}</div>
-                            </div>
-                          )}
-                          {selectedOrder.bulk_order.phone && (
-                            <div>
-                              <span className="text-gray-600">Phone:</span>
-                              <div className="font-medium">{selectedOrder.bulk_order.phone}</div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {selectedOrder.order && !selectedOrder.custom && !selectedOrder.bulk_order && (
-                      <div className="bg-gray-50 p-3 rounded">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2 py-1 rounded">Regular Order</span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                          <div>
-                            <span className="text-gray-600">Customer:</span>
-                            <div className="font-medium">{selectedOrder.order.company || `${selectedOrder.order.first_name} ${selectedOrder.order.last_name}`}</div>
-                          </div>
-                          {selectedOrder.order.email && (
-                            <div>
-                              <span className="text-gray-600">Email:</span>
-                              <div className="font-medium">{selectedOrder.order.email}</div>
-                            </div>
-                          )}
-                          {selectedOrder.order.phone && (
-                            <div>
-                              <span className="text-gray-600">Phone:</span>
-                              <div className="font-medium">{selectedOrder.order.phone}</div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {/* Notes Section */}
                 {selectedOrder.notes && selectedOrder.notes.length > 0 && (
