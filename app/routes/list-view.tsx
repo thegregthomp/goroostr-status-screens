@@ -49,6 +49,9 @@ export default function ListView() {
   
   // Dropdown state
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  
+  // Navigation loading state
+  const [isNavigating, setIsNavigating] = useState(false);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -413,16 +416,18 @@ export default function ListView() {
   // Toggle all statuses
   const toggleAllStatuses = (show) => {
     const newState = {};
-    ['OD', 'IP', 'PN', 'DL', 'IR', 'AW'].forEach(key => {
+    ['OD', 'DL', 'IP', 'IR', 'PN', 'AW'].forEach(key => {
       newState[key] = show;
     });
     setVisibleStatuses(newState);
   };
 
   // Group orders by status and type
-  const ordersByStatus = status_options
-    .sort((a, b) => a.order - b.order)
-    .map(status => {
+  const statusOrder = ['OD', 'DL', 'IP', 'IR', 'PN', 'AW'];
+  const ordersByStatus = statusOrder
+    .map(statusKey => {
+      const status = status_options.find(s => s.key === statusKey);
+      if (!status) return null;
       const statusOrders = orders.filter(order => order.status_value?.status_option?.key === status.key);
       
       // Separate orders by type
@@ -469,12 +474,13 @@ export default function ListView() {
         customGroups,
         totalOrders: statusOrders.length
       };
-    });
+    })
+    .filter(Boolean); // Remove any null entries
 
   return (
-    <main className="relative min-h-screen bg-gray-100 flex">
+    <main className="relative min-h-screen bg-gray-100">
       {/* Main Content */}
-      <div className="flex-1 p-4">
+      <div className="p-4 pr-24">
         <div className="w-full">
           <h1 className="text-2xl font-bold text-gray-800 mb-4">Order Status List</h1>
           
@@ -511,18 +517,18 @@ export default function ListView() {
                       </div>
                     </div>
                     <div className="p-2 max-h-48 overflow-y-auto">
-                      {['OD', 'IP', 'PN', 'DL', 'IR', 'AW'].map((statusKey) => {
+                      {['OD', 'DL', 'IP', 'IR', 'PN', 'AW'].map((statusKey) => {
                         const status = status_options.find(s => s.key === statusKey);
                         const orderCount = ordersByStatus.find(s => s.key === statusKey)?.totalOrders || 0;
                         
                         // Fallback name if status not found in options
                         const statusName = status?.name || {
                           'OD': 'Out for Delivery',
-                          'IP': 'In Progress', 
-                          'PN': 'Print Next',
                           'DL': 'Delivered',
+                          'IP': 'In Process', 
                           'IR': 'In Review',
-                          'AW': 'Awaiting'
+                          'PN': 'Pending',
+                          'AW': 'Awaiting Acceptance'
                         }[statusKey];
                         
                         return (
@@ -555,11 +561,25 @@ export default function ListView() {
             {ordersByStatus.map((status) => {
               if (status.totalOrders === 0 || !visibleStatuses[status.key]) return null;
               
-              // Calculate total value for this status (regular orders only)
-              const totalValue = status.regularOrders.reduce((sum, order) => {
+              // Calculate total value for this status (regular orders + grouped items)
+              let totalValue = 0;
+              
+              // Add regular orders
+              totalValue += status.regularOrders.reduce((sum, order) => {
                 const value = parseFloat(order.total || order.value || 0);
                 return sum + value;
               }, 0);
+              
+              // Add bulk order groups
+              totalValue += status.bulkGroups.reduce((sum, group) => {
+                const groupValue = group.orders.reduce((groupSum, order) => {
+                  const value = parseFloat(order.total || order.value || 0);
+                  return groupSum + value;
+                }, 0);
+                return sum + groupValue;
+              }, 0);
+              
+              // Custom orders typically don't have monetary values, so we skip them
 
               return (
                 <div key={status.key} className={`border-2 rounded-lg p-4 ${getStatusColor(status.key)}`}>
@@ -580,7 +600,7 @@ export default function ListView() {
                     )}
                   </div>
                   
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-1.5">
                     {/* Bulk Order Groups (only show as group if more than 1 item) */}
                     {status.bulkGroups.map((group) => {
                       const firstOrder = group.orders[0];
@@ -599,7 +619,7 @@ export default function ListView() {
                         return (
                           <div 
                             key={`bulk-single-${order.id}`}
-                            className="bg-white rounded p-2 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                            className="bg-white rounded p-1.5 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
                             onClick={() => handleOrderClick(order)}
                           >
                             <div className="flex justify-between items-start">
@@ -619,33 +639,33 @@ export default function ListView() {
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-xs text-gray-700 font-medium mb-1 truncate">{orderString}</p>
-                                <div className="text-xs text-gray-600 mb-1">
+                                <p className="text-xs text-gray-700 font-medium mb-0.5 truncate">{orderString}</p>
+                                <div className="text-xs text-gray-600">
                                   <span className="font-medium">Customer: </span>
                                   <span className="truncate">{customerName}</span>
                                 </div>
                               </div>
                               <div className="text-right ml-2 flex-shrink-0">
-                                {(() => {
-                                  const paymentType = order.payment_type || order.bulk_order?.payment_type;
-                                  const displayPaymentType = getPaymentType(paymentType);
-                                  return displayPaymentType && (
-                                    <div className="mb-2">
-                                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold border ${displayPaymentType.color}`}>
-                                        <span className="text-xs">{displayPaymentType.icon}</span>
-                                        {displayPaymentType.name}
-                                      </span>
-                                    </div>
-                                  );
-                                })()}
                                 {order.value && (
-                                  <div>
+                                  <div className="mb-1">
                                     <div className="text-base font-bold text-green-600">${parseFloat(order.value).toFixed(2)}</div>
                                     {order.total && (
                                       <div className="text-base font-bold text-blue-600">${parseFloat(order.total).toFixed(2)}</div>
                                     )}
                                   </div>
                                 )}
+                                {(() => {
+                                  const paymentType = order.payment_type || order.bulk_order?.payment_type;
+                                  const displayPaymentType = getPaymentType(paymentType);
+                                  return displayPaymentType && (
+                                    <div>
+                                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-semibold border ${displayPaymentType.color}`}>
+                                        <span className="text-xs">{displayPaymentType.icon}</span>
+                                        {displayPaymentType.name}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </div>
@@ -661,7 +681,7 @@ export default function ListView() {
                       return (
                         <div 
                           key={`bulk-${group.order_id}`}
-                          className="bg-purple-100 border border-purple-200 rounded p-2 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                          className="bg-purple-100 border border-purple-200 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
                           onClick={() => handleGroupClick(group, 'Bulk')}
                         >
                           <div className="flex justify-between items-start">
@@ -673,7 +693,7 @@ export default function ListView() {
                                   Bulk
                                 </span>
                               </div>
-                              <p className="text-xs text-gray-700 font-medium mb-1 truncate">{customerName}</p>
+                              <p className="text-xs text-gray-700 font-medium mb-0.5 truncate">{customerName}</p>
                               <div className="text-xs text-gray-600">
                                 <span className="font-medium">{group.orders.length} items</span>
                               </div>
@@ -708,7 +728,7 @@ export default function ListView() {
                         return (
                           <div 
                             key={`custom-single-${order.id}`}
-                            className="bg-white rounded p-2 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                            className="bg-white rounded p-1.5 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
                             onClick={() => handleOrderClick(order)}
                           >
                             <div className="flex justify-between items-start">
@@ -739,8 +759,8 @@ export default function ListView() {
                                   const paymentType = order.payment_type || order.custom?.payment_type;
                                   const displayPaymentType = getPaymentType(paymentType);
                                   return displayPaymentType && (
-                                    <div className="mb-2">
-                                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold border ${displayPaymentType.color}`}>
+                                    <div>
+                                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-semibold border ${displayPaymentType.color}`}>
                                         <span className="text-xs">{displayPaymentType.icon}</span>
                                         {displayPaymentType.name}
                                       </span>
@@ -757,7 +777,7 @@ export default function ListView() {
                       return (
                         <div 
                           key={`custom-${group.order_id}`}
-                          className="bg-blue-100 border border-blue-200 rounded p-2 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                          className="bg-blue-100 border border-blue-200 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
                           onClick={() => handleGroupClick(group, 'Custom')}
                         >
                           <div className="flex justify-between items-start">
@@ -769,7 +789,7 @@ export default function ListView() {
                                   Custom
                                 </span>
                               </div>
-                              <p className="text-xs text-gray-700 font-medium mb-1 truncate">{customerName}</p>
+                              <p className="text-xs text-gray-700 font-medium mb-0.5 truncate">{customerName}</p>
                               <div className="text-xs text-gray-600">
                                 <span className="font-medium">{group.orders.length} items</span>
                               </div>
@@ -811,7 +831,7 @@ export default function ListView() {
                       return (
                         <div 
                           key={order.id}
-                          className="bg-white rounded p-2 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                          className="bg-white rounded p-1.5 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
                           onClick={() => handleOrderClick(order)}
                         >
                           <div className="flex justify-between items-start">
@@ -850,10 +870,10 @@ export default function ListView() {
                               </div>
                               
                               {/* Order Description */}
-                              <p className="text-xs text-gray-700 font-medium mb-1 truncate">{orderString}</p>
+                              <p className="text-xs text-gray-700 font-medium mb-0.5 truncate">{orderString}</p>
                               
                               {/* Customer Info */}
-                              <div className="text-xs text-gray-600 mb-1">
+                              <div className="text-xs text-gray-600">
                                 <span className="font-medium">Customer: </span>
                                 <span className="truncate">
                                   {isCustom ? 
@@ -866,28 +886,28 @@ export default function ListView() {
                             
                             {/* Price and Payment Method */}
                             <div className="text-right ml-2 flex-shrink-0">
-                              {/* Payment Method */}
-                              {(() => {
-                                const paymentType = order.payment_type || order.order?.payment_type || order.bulk_order?.payment_type || order.custom?.payment_type;
-                                const displayPaymentType = getPaymentType(paymentType);
-                                return displayPaymentType && (
-                                  <div className="mb-2">
-                                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold border ${displayPaymentType.color}`}>
-                                      <span className="text-xs">{displayPaymentType.icon}</span>
-                                      {displayPaymentType.name}
-                                    </span>
-                                  </div>
-                                );
-                              })()}
                               {/* Pricing */}
                               {!isCustom && order.value && (
-                                <div>
+                                <div className="mb-1">
                                   <div className="text-base font-bold text-green-600">${parseFloat(order.value).toFixed(2)}</div>
                                   {order.total && (
                                     <div className="text-base font-bold text-blue-600">${parseFloat(order.total).toFixed(2)}</div>
                                   )}
                                 </div>
                               )}
+                              {/* Payment Method */}
+                              {(() => {
+                                const paymentType = order.payment_type || order.order?.payment_type || order.bulk_order?.payment_type || order.custom?.payment_type;
+                                const displayPaymentType = getPaymentType(paymentType);
+                                return displayPaymentType && (
+                                  <div>
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-semibold border ${displayPaymentType.color}`}>
+                                      <span className="text-xs">{displayPaymentType.icon}</span>
+                                      {displayPaymentType.name}
+                                    </span>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                         </div>
@@ -902,7 +922,7 @@ export default function ListView() {
       </div>
       
       {/* Vertical Sidebar */}
-      <div className="w-20 bg-gray-800 bg-opacity-95 backdrop-blur-sm flex flex-col justify-between p-2 text-white">
+      <div className="fixed right-0 top-0 bottom-0 w-20 bg-gray-800 bg-opacity-95 backdrop-blur-sm flex flex-col justify-between p-2 text-white z-40">
         <div className="space-y-2">
           <div className="flex flex-col items-center gap-1">
             <div className="flex items-center gap-1">
@@ -925,10 +945,18 @@ export default function ListView() {
               to="/" 
               className="block p-2 text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors"
               title="Dashboard View"
+              onClick={() => setIsNavigating(true)}
             >
-              <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-              </svg>
+              {isNavigating ? (
+                <svg className="w-4 h-4 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                </svg>
+              )}
             </Link>
             <div className="p-2 text-white bg-gray-700 rounded mt-1" title="List View (Current)">
               <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
