@@ -204,7 +204,7 @@ export default function Index() {
     setIsRefreshing(true);
     try {
       const response = await fetch(
-        `${apiEndpoint}/get-status-orders`
+        `${apiEndpoint}/get-status-orders?paginate=false`
       );
       const { data, custom } = await response.json();
       setOrders([...data, ...custom]);

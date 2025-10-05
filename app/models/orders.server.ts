@@ -1,6 +1,7 @@
 const goroostrApiRoute = process.env.GOROOSTR_ENDPOINT;
 
 export async function getOrders() {
-  const response = await fetch(`${goroostrApiRoute}/get-status-orders`);
+  // Add paginate=false to get all orders (status screens need everything)
+  const response = await fetch(`${goroostrApiRoute}/get-status-orders?paginate=false`);
   return await response.json();
 }
