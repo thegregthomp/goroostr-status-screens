@@ -13,7 +13,7 @@
     CYPRESS_CACHE_FOLDER = "./node_modules/CypressBinary"
     # set TERM variable for terminal output
     TERM = "xterm"
-    NODE_VERSION = "16"
+    NODE_VERSION = "18"
 
 [dev]
   command = "remix watch"
