@@ -787,7 +787,7 @@ export default function Index() {
                 </div>
 
                 {/* Notes Section */}
-                {selectedOrder.notes && selectedOrder.notes.length > 0 && (
+                {selectedOrder.notes && Array.isArray(selectedOrder.notes) && selectedOrder.notes.length > 0 && (
                   <div className="bg-white border rounded-lg p-4">
                     <h3 className="text-lg font-semibold mb-3">Notes</h3>
                     <div className="space-y-3">
