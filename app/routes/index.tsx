@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import type { LoaderArgs } from "@remix-run/node";
 import StatusSection from "~/components/StatusSection";
 import { useLoaderData, Link } from "@remix-run/react";
 import { json } from "@remix-run/node";
@@ -16,7 +17,7 @@ export function links() {
   return [{ rel: "stylesheet", href: stylesheetUrl }];
 }
 
-export async function loader() {
+export async function loader({ request }: LoaderArgs) {
   const ordersData = await getOrders();
   return json({
     ...ordersData,
