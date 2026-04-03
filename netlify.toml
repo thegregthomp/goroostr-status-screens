@@ -5,6 +5,7 @@
 
 [functions]
   node_bundler = "esbuild"
+  included_files = ["node_modules/@remix-run/**"]
 
   [build.environment]
     # cache Cypress binary in local "node_modules" folder
