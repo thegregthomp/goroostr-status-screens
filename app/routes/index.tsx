@@ -406,7 +406,7 @@ export default function Index() {
             <StatusSection
               color="bg-emerald-500"
               orders={orders}
-              statusKey={"AW"}
+              statusKey={"PY"}
               statusOptions={status_options}
               onOrderClick={handleOrderClick}
               onGroupClick={handleGroupClick}
@@ -461,7 +461,7 @@ export default function Index() {
             <StatusSection
               color="bg-emerald-500"
               orders={orders}
-              statusKey={"AW"}
+              statusKey={"PY"}
               statusOptions={status_options}
               onOrderClick={handleOrderClick}
               onGroupClick={handleGroupClick}

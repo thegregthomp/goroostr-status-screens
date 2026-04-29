@@ -44,7 +44,7 @@ export default function ListView() {
     'PN': true, // Print Next
     'DL': true, // Delivered
     'IR': true, // In Review
-    'AW': true  // Awaiting
+    'PY': true  // Ready for Payment
   });
   
   // Dropdown state
@@ -323,7 +323,7 @@ export default function ListView() {
       case 'PN': return '📋';
       case 'DL': return '✅';
       case 'IR': return '🔄';
-      case 'AW': return '⏳';
+      case 'PY': return '💰';
       default: return '📦';
     }
   };
@@ -336,7 +336,7 @@ export default function ListView() {
       case 'PN': return 'bg-emerald-400 border-emerald-500';
       case 'DL': return 'bg-emerald-100 border-emerald-200';
       case 'IR': return 'bg-emerald-300 border-emerald-400';
-      case 'AW': return 'bg-emerald-500 border-emerald-600';
+      case 'PY': return 'bg-emerald-500 border-emerald-600';
       default: return 'bg-gray-50 border-gray-200';
     }
   };
@@ -416,14 +416,14 @@ export default function ListView() {
   // Toggle all statuses
   const toggleAllStatuses = (show) => {
     const newState = {};
-    ['OD', 'DL', 'IP', 'IR', 'PN', 'AW'].forEach(key => {
+    ['OD', 'DL', 'IP', 'IR', 'PN', 'PY'].forEach(key => {
       newState[key] = show;
     });
     setVisibleStatuses(newState);
   };
 
   // Group orders by status and type
-  const statusOrder = ['OD', 'DL', 'IP', 'IR', 'PN', 'AW'];
+  const statusOrder = ['OD', 'DL', 'IP', 'IR', 'PN', 'PY'];
   const ordersByStatus = statusOrder
     .map(statusKey => {
       const status = status_options.find(s => s.key === statusKey);
@@ -517,18 +517,18 @@ export default function ListView() {
                       </div>
                     </div>
                     <div className="p-2 max-h-48 overflow-y-auto">
-                      {['OD', 'DL', 'IP', 'IR', 'PN', 'AW'].map((statusKey) => {
+                      {['OD', 'DL', 'IP', 'IR', 'PN', 'PY'].map((statusKey) => {
                         const status = status_options.find(s => s.key === statusKey);
                         const orderCount = ordersByStatus.find(s => s.key === statusKey)?.totalOrders || 0;
-                        
+
                         // Fallback name if status not found in options
                         const statusName = status?.name || {
                           'OD': 'Out for Delivery',
                           'DL': 'Delivered',
-                          'IP': 'In Process', 
+                          'IP': 'In Process',
                           'IR': 'In Review',
                           'PN': 'Pending',
-                          'AW': 'Awaiting Acceptance'
+                          'PY': 'Ready for Payment'
                         }[statusKey];
                         
                         return (

@@ -158,7 +158,7 @@ export default function StatusSection({
     }
   }, [orders, statusKey]);
 
-  const shouldHideSingleBulkOrders = ["DL", "IR", "AW", "PN"];
+  const shouldHideSingleBulkOrders = ["DL", "IR", "PY", "PN"];
 
   useEffect(() => {
     if (orders.length > 0) {
@@ -322,7 +322,7 @@ export default function StatusSection({
       case 'PN': return '📋'; // Clipboard for Print Next
       case 'DL': return '✅'; // Checkmark for Delivered
       case 'IR': return '🔄'; // Recycle for In Review
-      case 'AW': return '⏳'; // Hourglass for Awaiting
+      case 'PY': return '💰'; // Money bag for Ready for Payment
       default: return '📦'; // Package as fallback
     }
   };
