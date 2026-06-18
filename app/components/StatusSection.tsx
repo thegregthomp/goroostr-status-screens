@@ -529,7 +529,9 @@ export default function StatusSection({
                           <span
                             className={`${orderIdColor} inline-block text-sm font-bold tracking-wide`}
                           >
-                            {order.id}
+                            {isCustom
+                              ? `${order.order_id || order.custom?.id} - ${order.id}`
+                              : order.id}
                           </span>{" "}
                           &#x2022;{" "}
                           <span className="text-sm font-medium">{orderString}</span>

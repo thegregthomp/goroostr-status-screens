@@ -735,7 +735,7 @@ export default function ListView() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1 mb-1">
                                   <div className={`w-2 h-2 rounded-full ${modelInfo.working_status === "working" ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                                  <span className="text-sm font-bold text-gray-800">#{order.id}</span>
+                                  <span className="text-sm font-bold text-gray-800">#{order.order_id || order.custom?.id} - {order.id}</span>
                                   <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                                     Custom
                                   </span>
@@ -1382,7 +1382,7 @@ export default function ListView() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-2">
                                 <div className={`w-2 h-2 rounded-full ${modelInfo.working_status === "working" ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                                <span className="text-sm font-bold text-gray-800">#{order.id}</span>
+                                <span className="text-sm font-bold text-gray-800">{isCustom ? `#${order.order_id || order.custom?.id} - ${order.id}` : `#${order.id}`}</span>
                                 {isCustom ? (
                                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                                     Custom
