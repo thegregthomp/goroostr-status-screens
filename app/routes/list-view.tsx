@@ -611,7 +611,8 @@ export default function ListView() {
                         const order = firstOrder;
                         const modelInfo = JSON.parse(order.model_info);
                         const orderDetails = order.bulk_order;
-                        const orderString = order.model_desc.length > 80 ? order.model_desc.substr(0, 80) + "…" : order.model_desc;
+                        const _md = order.model_desc || order.description || "";
+                        const orderString = _md.length > 80 ? _md.substr(0, 80) + "…" : _md;
                         const statusDate = order.status_value.created_at ? DateTime.fromSQL(order.status_value.created_at) : DateTime.now();
                         const now = DateTime.now();
                         const daysInStatus = Math.ceil(now.diff(statusDate, ["days"]).toObject().days);
@@ -818,9 +819,9 @@ export default function ListView() {
                       } else {
                         modelInfo = JSON.parse(order.model_info);
                         orderDetails = isBulk ? order.bulk_order : order.order;
-                        orderString = order.model_desc;
+                        orderString = order.model_desc || order.description || "";
                         if (orderString.length > 80) {
-                          orderString = order.model_desc.substr(0, 80) + "…";
+                          orderString = orderString.substr(0, 80) + "…";
                         }
                       }
                       

@@ -32,6 +32,10 @@ export default function StatusSection({
   const [bulkOrdersSummary, setBulkOrdersSummary] = useState([]) as any;
   const [customOrders, setCustomOrders] = useState([]) as any;
   const [customOrdersSummary, setCustomOrdersSummary] = useState([]) as any;
+  // ITAD assets are CustomOrderItems parented to an itad_lot (not a consumer
+  // custom order), so they group by itad_lot_id and label by the lot's arc_pu.
+  const [itadOrders, setItadOrders] = useState([]) as any;
+  const [itadOrdersSummary, setItadOrdersSummary] = useState([]) as any;
   // const [styles, setStyles] = useState({});
   const dataRef = useRef(null);
   const animationConfigRef = useRef({});
@@ -152,9 +156,62 @@ export default function StatusSection({
     setCustomOrdersSummary(customOrderSummaries);
   };
 
+  const groupItadOrders = (orders) => {
+    const groupedOrders = [];
+    const itadItems = orders.filter((order) => {
+      return order.itad_lot_id != null;
+    });
+
+    // group ITAD assets by their lot
+    itadItems.forEach((order) => {
+      const index = groupedOrders.findIndex(
+        (groupedOrder) => groupedOrder.itad_lot_id == order.itad_lot_id
+      );
+      if (index == -1) {
+        groupedOrders.push({
+          itad_lot_id: order.itad_lot_id,
+          orders: [order],
+        });
+      } else {
+        groupedOrders[index].orders.push(order);
+      }
+    });
+
+    // filter for status key
+    groupedOrders.forEach((groupedOrder) => {
+      groupedOrder.orders = groupedOrder.orders.filter((order) => {
+        return order.status_value.status_option.key == statusKey;
+      });
+    });
+
+    const filteredGroupedOrders = groupedOrders.filter((groupedOrder) => {
+      return groupedOrder.orders.length > 0;
+    });
+
+    setItadOrders(filteredGroupedOrders);
+    const itadOrderSummaries = [];
+    filteredGroupedOrders.forEach((groupedOrder) => {
+      const totalItad = itadItems.filter((order) => {
+        return order.itad_lot_id == groupedOrder.itad_lot_id;
+      });
+      itadOrderSummaries.push({
+        itad_lot_id: groupedOrder.itad_lot_id,
+        lot: groupedOrder.orders[0].itad_lot,
+        count: `${groupedOrder.orders.length}/${totalItad.length}`,
+      });
+    });
+    setItadOrdersSummary(itadOrderSummaries);
+  };
+
   useEffect(() => {
     if (orders.length > 0) {
       groupCustomOrders(orders);
+    }
+  }, [orders, statusKey]);
+
+  useEffect(() => {
+    if (orders.length > 0) {
+      groupItadOrders(orders);
     }
   }, [orders, statusKey]);
 
@@ -358,16 +415,21 @@ export default function StatusSection({
           <div className={isLargerThanContainer ? "marquee" : ""} ref={dataRef}>
             {shouldHideSingleBulkOrders.includes(statusKey) &&
               bulkOrdersSummary.map((orderSummary) => {
+                // Partner trade-ins are bulk orders with type 'trade_in' — same
+                // grouping, but render rose + the partner name to set them apart
+                // from consumer bulk orders (purple).
+                const isTradeIn = orderSummary.order && orderSummary.order.type === "trade_in";
+                const partnerName = isTradeIn && orderSummary.order.partner ? orderSummary.order.partner.name : null;
                 return (
                   <React.Fragment key={orderSummary.count}>
                     <div
-                      className={`mb-1 flex justify-between rounded bg-purple-100 py-0.5 px-2 shadow-sm cursor-pointer hover:bg-purple-200 transition-colors`}
+                      className={`mb-1 flex justify-between rounded ${isTradeIn ? "bg-rose-100 hover:bg-rose-200" : "bg-purple-100 hover:bg-purple-200"} py-0.5 px-2 shadow-sm cursor-pointer transition-colors`}
                       onClick={() => onGroupClick(bulkOrders.find(group => group.order_id === orderSummary.order_id), 'Bulk')}
                     >
                       <div>
                         <span>
                           <span
-                            className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-purple-500 text-xs font-medium"
+                            className={`mr-1 inline-flex h-2 w-2 items-center rounded-full ${isTradeIn ? "bg-rose-500" : "bg-purple-500"} text-xs font-medium`}
                             style={{ marginBottom: "1px" }}
                           ></span>
                         </span>
@@ -378,7 +440,9 @@ export default function StatusSection({
                         </span>{" "}
                         &#x2022;{" "}
                         <span className="font-bold">
-                          {orderSummary.order.company ? (
+                          {partnerName ? (
+                            <>{partnerName}</>
+                          ) : orderSummary.order.company ? (
                             <>{orderSummary.order.company}</>
                           ) : (
                             <>
@@ -388,7 +452,7 @@ export default function StatusSection({
                           )}
                         </span>
                       </div>
-                      <span className="inline-flex items-center whitespace-nowrap rounded-full bg-purple-300 px-2.5 py-0.5 text-xs font-medium text-black">
+                      <span className={`inline-flex items-center whitespace-nowrap rounded-full ${isTradeIn ? "bg-rose-300" : "bg-purple-300"} px-2.5 py-0.5 text-xs font-medium text-black`}>
                         {orderSummary.count}
                       </span>
                     </div>
@@ -434,28 +498,59 @@ export default function StatusSection({
                   </React.Fragment>
                 );
               })}
+            {shouldHideSingleBulkOrders.includes(statusKey) &&
+              itadOrdersSummary.map((orderSummary) => {
+                return (
+                  <React.Fragment key={`itad-${orderSummary.itad_lot_id}-${orderSummary.count}`}>
+                    <div
+                      className={`mb-1 flex justify-between rounded bg-teal-100 py-0.5 px-2 shadow-sm cursor-pointer hover:bg-teal-200 transition-colors`}
+                      onClick={() => onGroupClick(itadOrders.find(group => group.itad_lot_id === orderSummary.itad_lot_id), 'ITAD')}
+                    >
+                      <div>
+                        <span>
+                          <span
+                            className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-teal-500 text-xs font-medium"
+                            style={{ marginBottom: "1px" }}
+                          ></span>
+                        </span>
+                        <span className={`inline-block text-sm font-bold text-black`}>
+                          {orderSummary.lot ? orderSummary.lot.arc_pu : `Lot #${orderSummary.itad_lot_id}`}
+                        </span>{" "}
+                        &#x2022;{" "}
+                        <span className="font-bold">ITAD</span>
+                      </div>
+                      <span className="inline-flex items-center whitespace-nowrap rounded-full bg-teal-300 px-2.5 py-0.5 text-xs font-medium text-black">
+                        {orderSummary.count}
+                      </span>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
             <>
               {filteredOrders.map((order) => {
                 if (
                   shouldHideSingleBulkOrders.includes(statusKey) &&
-                  (order.bulk_order != null || order.custom != null)
+                  (order.bulk_order != null || order.custom != null || order.itad_lot_id != null)
                 ) {
                   return null;
                 }
 
-                // Check if this is a custom order
+                // Order/item type detection
+                const isItad = order.itad_lot_id != null;
                 const isCustom = order.custom != null;
                 const isBulk = order.bulk_order != null;
+                const isTradeIn = isBulk && order.bulk_order.type === "trade_in";
 
                 let modelInfo, details, orderDetails;
 
-                if (isCustom) {
-                  // Custom orders might not have model_info or details in the same format
+                if (isCustom || isItad) {
+                  // Custom + ITAD items may not have model_info/details in the
+                  // same format; the API back-fills them as a small JSON blob.
                   modelInfo = order.model_info
                     ? JSON.parse(order.model_info)
                     : { working_status: "working" };
                   details = order.details ? JSON.parse(order.details) : {};
-                  orderDetails = order.custom;
+                  orderDetails = isItad ? order.itad_lot : order.custom;
                 } else {
                   modelInfo = JSON.parse(order.model_info);
                   details = JSON.parse(order.details);
@@ -500,9 +595,9 @@ export default function StatusSection({
                     ? orderDetails.company
                     : `${orderDetails.first_name} ${orderDetails.last_name}`;
                 } else {
-                  orderString = order.model_desc;
+                  orderString = order.model_desc || order.description || "";
                   if (orderString.length > 50) {
-                    orderString = order.model_desc.substr(0, 50) + "\u2026";
+                    orderString = orderString.substr(0, 50) + "\u2026";
                   }
                 }
                 return (
@@ -531,6 +626,8 @@ export default function StatusSection({
                           >
                             {isCustom
                               ? `${order.order_id || order.custom?.id} - ${order.id}`
+                              : isItad
+                              ? `${order.itad_lot?.arc_pu || `Lot ${order.itad_lot_id}`} - ${order.id}`
                               : order.id}
                           </span>{" "}
                           &#x2022;{" "}
@@ -538,9 +635,17 @@ export default function StatusSection({
                           <br />
                         </div>
                         <span>
-                          {isCustom ? (
+                          {isItad ? (
+                            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-800">
+                              ITAD
+                            </span>
+                          ) : isCustom ? (
                             <span className="inline-flex items-center whitespace-nowrap rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
                               Custom
+                            </span>
+                          ) : isTradeIn ? (
+                            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-medium text-rose-800">
+                              {orderDetails.id}
                             </span>
                           ) : isBulk ? (
                             <span className="inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800">

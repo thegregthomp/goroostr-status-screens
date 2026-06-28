@@ -550,7 +550,9 @@ export default function Index() {
               <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-bold">
                   {selectedOrderGroup ? (
-                    `${selectedOrderGroup.groupType} Order Group #${selectedOrderGroup.order_id}`
+                    selectedOrderGroup.groupType === 'ITAD'
+                      ? `ITAD Lot ${selectedOrderGroup.orders[0]?.itad_lot?.arc_pu || `#${selectedOrderGroup.itad_lot_id}`}`
+                      : `${selectedOrderGroup.groupType} Order Group #${selectedOrderGroup.order_id}`
                   ) : (
                     <>
                       <div className="flex items-center gap-3">
@@ -876,8 +878,10 @@ export default function Index() {
             {selectedOrderGroup && (
               <div className="space-y-4">
                 <div className="bg-gray-50 p-3 rounded">
-                  <div className="font-semibold">Group ID: {selectedOrderGroup.order_id}</div>
-                  <div>Customer: {selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.company || `${selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.first_name} ${selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.last_name}`}</div>
+                  <div className="font-semibold">Group ID: {selectedOrderGroup.groupType === 'ITAD' ? (selectedOrderGroup.orders[0]?.itad_lot?.arc_pu || selectedOrderGroup.itad_lot_id) : selectedOrderGroup.order_id}</div>
+                  <div>Customer: {selectedOrderGroup.groupType === 'ITAD'
+                    ? `ITAD Lot ${selectedOrderGroup.orders[0]?.itad_lot?.arc_pu || selectedOrderGroup.itad_lot_id}`
+                    : (selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.company || `${selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.first_name} ${selectedOrderGroup.orders[0]?.[selectedOrderGroup.groupType === 'Bulk' ? 'bulk_order' : 'custom']?.last_name}`)}</div>
                   <div>Items in group: {selectedOrderGroup.orders.length}</div>
                 </div>
                 
@@ -893,7 +897,7 @@ export default function Index() {
                         <div className="flex justify-between items-start">
                           <div>
                             <div className="font-medium">ID: {order.id}</div>
-                            <div className="text-sm text-gray-600">{order.model_desc}</div>
+                            <div className="text-sm text-gray-600">{order.model_desc || order.description}</div>
                           </div>
                           <div className="text-sm font-medium text-gray-800">
                             {order.status_value?.status_option?.name}
