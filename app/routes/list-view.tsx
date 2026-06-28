@@ -431,9 +431,11 @@ export default function ListView() {
       const statusOrders = orders.filter(order => order.status_value?.status_option?.key === status.key);
       
       // Separate orders by type
-      const regularOrders = statusOrders.filter(order => !order.bulk_order && !order.custom);
+      const regularOrders = statusOrders.filter(order => !order.bulk_order && !order.custom && !order.itad_lot_id);
       const bulkOrders = statusOrders.filter(order => order.bulk_order);
       const customOrders = statusOrders.filter(order => order.custom);
+      // ITAD assets: CustomOrderItems parented to an itad_lot (no custom parent)
+      const itadOrders = statusOrders.filter(order => order.itad_lot_id);
       
       // Group bulk orders by order_id
       const bulkGroups = [];
@@ -467,11 +469,24 @@ export default function ListView() {
         customOrderMap[orderId].orders.push(order);
       });
 
+      // Group ITAD assets by their lot
+      const itadGroups = [];
+      const itadMap = {};
+      itadOrders.forEach(order => {
+        const lotId = order.itad_lot_id;
+        if (!itadMap[lotId]) {
+          itadMap[lotId] = { itad_lot_id: lotId, lot: order.itad_lot, orders: [], type: 'itad' };
+          itadGroups.push(itadMap[lotId]);
+        }
+        itadMap[lotId].orders.push(order);
+      });
+
       return {
         ...status,
         regularOrders,
         bulkGroups,
         customGroups,
+        itadGroups,
         totalOrders: statusOrders.length
       };
     })
@@ -604,7 +619,12 @@ export default function ListView() {
                     {/* Bulk Order Groups (only show as group if more than 1 item) */}
                     {status.bulkGroups.map((group) => {
                       const firstOrder = group.orders[0];
-                      const customerName = firstOrder.bulk_order?.company || `${firstOrder.bulk_order?.first_name} ${firstOrder.bulk_order?.last_name}`;
+                      // Partner trade-ins are bulk orders with type 'trade_in' —
+                      // render rose + the partner name to set them apart.
+                      const isTradeIn = firstOrder.bulk_order?.type === 'trade_in';
+                      const customerName = (isTradeIn && firstOrder.bulk_order?.partner?.name)
+                        ? firstOrder.bulk_order.partner.name
+                        : (firstOrder.bulk_order?.company || `${firstOrder.bulk_order?.first_name} ${firstOrder.bulk_order?.last_name}`);
                       
                       // If only 1 item, treat as regular order
                       if (group.orders.length === 1) {
@@ -628,7 +648,7 @@ export default function ListView() {
                                 <div className="flex items-center gap-1 mb-1">
                                   <div className={`w-2 h-2 rounded-full ${modelInfo.working_status === "working" ? 'bg-green-500' : 'bg-red-500'}`}></div>
                                   <span className="text-sm font-bold text-gray-800">#{order.id}</span>
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${isTradeIn ? 'bg-rose-100 text-rose-800' : 'bg-purple-100 text-purple-800'}`}>
                                     B#{orderDetails.id}
                                   </span>
                                   {daysInStatus > 2 && (
@@ -682,16 +702,16 @@ export default function ListView() {
                       return (
                         <div 
                           key={`bulk-${group.order_id}`}
-                          className="bg-purple-100 border border-purple-200 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                          className={`${isTradeIn ? 'bg-rose-100 border-rose-200' : 'bg-purple-100 border-purple-200'} border rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow`}
                           onClick={() => handleGroupClick(group, 'Bulk')}
                         >
                           <div className="flex justify-between items-start">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1 mb-1">
-                                <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                                <div className={`w-2 h-2 rounded-full ${isTradeIn ? 'bg-rose-500' : 'bg-purple-500'}`}></div>
                                 <span className="text-sm font-bold text-gray-800">#{group.order_id}</span>
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-200 text-purple-800">
-                                  Bulk
+                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${isTradeIn ? 'bg-rose-200 text-rose-800' : 'bg-purple-200 text-purple-800'}`}>
+                                  {isTradeIn ? 'Trade-In' : 'Bulk'}
                                 </span>
                               </div>
                               <p className="text-xs text-gray-700 font-medium mb-0.5 truncate">{customerName}</p>
@@ -798,6 +818,85 @@ export default function ListView() {
                             <div className="text-right ml-2 flex-shrink-0">
                               <div className="text-xs text-gray-500">
                                 <div className="font-medium">Custom</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* ITAD Asset Groups (by lot) */}
+                    {status.itadGroups.map((group) => {
+                      const firstOrder = group.orders[0];
+                      const lotLabel = firstOrder.itad_lot?.arc_pu || `Lot #${group.itad_lot_id}`;
+
+                      // Single item — one card
+                      if (group.orders.length === 1) {
+                        const order = firstOrder;
+                        const modelInfo = order.model_info ? JSON.parse(order.model_info) : { working_status: "working" };
+                        const statusDate = order.status_value.created_at ? DateTime.fromSQL(order.status_value.created_at) : DateTime.now();
+                        const now = DateTime.now();
+                        const daysInStatus = Math.ceil(now.diff(statusDate, ["days"]).toObject().days);
+                        const _md = order.model_desc || order.description || "";
+                        const orderString = _md.length > 80 ? _md.substr(0, 80) + "…" : _md;
+                        return (
+                          <div
+                            key={`itad-single-${order.id}`}
+                            className="bg-white rounded p-1.5 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                            onClick={() => handleOrderClick(order)}
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1 mb-1">
+                                  <div className={`w-2 h-2 rounded-full ${modelInfo.working_status === "working" ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                                  <span className="text-sm font-bold text-gray-800">#{lotLabel} - {order.id}</span>
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
+                                    ITAD
+                                  </span>
+                                  {daysInStatus > 2 && (
+                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
+                                      daysInStatus > 5 ? 'bg-red-100 text-red-800' :
+                                      daysInStatus > 3 ? 'bg-orange-100 text-orange-800' : 'bg-yellow-100 text-yellow-800'
+                                    }`}>
+                                      {daysInStatus}d
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-700 font-medium mb-1 truncate">{orderString}</p>
+                                <div className="text-xs text-gray-600 mb-1">
+                                  <span className="font-medium">Lot: </span>
+                                  <span className="truncate">{lotLabel}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // Multiple items — group card
+                      return (
+                        <div
+                          key={`itad-${group.itad_lot_id}`}
+                          className="bg-teal-100 border border-teal-200 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                          onClick={() => handleGroupClick(group, 'ITAD')}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1 mb-1">
+                                <div className="w-2 h-2 rounded-full bg-teal-500"></div>
+                                <span className="text-sm font-bold text-gray-800">{lotLabel}</span>
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-teal-200 text-teal-800">
+                                  ITAD
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-700 font-medium mb-0.5 truncate">{lotLabel}</p>
+                              <div className="text-xs text-gray-600">
+                                <span className="font-medium">{group.orders.length} items</span>
+                              </div>
+                            </div>
+                            <div className="text-right ml-2 flex-shrink-0">
+                              <div className="text-xs text-gray-500">
+                                <div className="font-medium">ITAD</div>
                               </div>
                             </div>
                           </div>
@@ -1001,7 +1100,9 @@ export default function ListView() {
               <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-bold">
                   {selectedOrderGroup ? (
-                    `${selectedOrderGroup.groupType} Order Group #${selectedOrderGroup.order_id}`
+                    selectedOrderGroup.groupType === 'ITAD'
+                      ? `ITAD Lot ${selectedOrderGroup.orders[0]?.itad_lot?.arc_pu || `#${selectedOrderGroup.itad_lot_id}`}`
+                      : `${selectedOrderGroup.groupType} Order Group #${selectedOrderGroup.order_id}`
                   ) : (
                     <>
                       <div className="flex items-center gap-3">
@@ -1326,15 +1427,17 @@ export default function ListView() {
 
             {selectedOrderGroup && (
               <div className="space-y-4">
-                <div className={`p-4 rounded-lg ${selectedOrderGroup.type === 'bulk' ? 'bg-purple-100 border border-purple-200' : 'bg-blue-100 border border-blue-200'}`}>
+                <div className={`p-4 rounded-lg ${selectedOrderGroup.type === 'itad' ? 'bg-teal-100 border border-teal-200' : selectedOrderGroup.type === 'bulk' ? 'bg-purple-100 border border-purple-200' : 'bg-blue-100 border border-blue-200'}`}>
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded-full ${selectedOrderGroup.type === 'bulk' ? 'bg-purple-500' : 'bg-blue-500'}`}></div>
+                      <div className={`w-3 h-3 rounded-full ${selectedOrderGroup.type === 'itad' ? 'bg-teal-500' : selectedOrderGroup.type === 'bulk' ? 'bg-purple-500' : 'bg-blue-500'}`}></div>
                       <div className="font-bold text-lg">
-                        {selectedOrderGroup.type === 'bulk' ? 'Bulk' : 'Custom'} Order #{selectedOrderGroup.order_id}
+                        {selectedOrderGroup.type === 'itad'
+                          ? `ITAD Lot ${selectedOrderGroup.orders[0]?.itad_lot?.arc_pu || `#${selectedOrderGroup.itad_lot_id}`}`
+                          : `${selectedOrderGroup.type === 'bulk' ? 'Bulk' : 'Custom'} Order #${selectedOrderGroup.order_id}`}
                       </div>
                       <span className={`inline-flex items-center px-2 py-1 rounded-full text-sm font-medium ${
-                        selectedOrderGroup.type === 'bulk' ? 'bg-purple-200 text-purple-800' : 'bg-blue-200 text-blue-800'
+                        selectedOrderGroup.type === 'itad' ? 'bg-teal-200 text-teal-800' : selectedOrderGroup.type === 'bulk' ? 'bg-purple-200 text-purple-800' : 'bg-blue-200 text-blue-800'
                       }`}>
                         {selectedOrderGroup.orders.length} items
                       </span>
@@ -1354,9 +1457,11 @@ export default function ListView() {
                     })()}
                   </div>
                   <div className="text-sm text-gray-700">
-                    <span className="font-medium">Customer: </span>
-                    {selectedOrderGroup.orders[0]?.[selectedOrderGroup.type === 'bulk' ? 'bulk_order' : 'custom']?.company || 
-                     `${selectedOrderGroup.orders[0]?.[selectedOrderGroup.type === 'bulk' ? 'bulk_order' : 'custom']?.first_name} ${selectedOrderGroup.orders[0]?.[selectedOrderGroup.type === 'bulk' ? 'bulk_order' : 'custom']?.last_name}`}
+                    <span className="font-medium">{selectedOrderGroup.type === 'itad' ? 'Lot: ' : 'Customer: '}</span>
+                    {selectedOrderGroup.type === 'itad'
+                      ? (selectedOrderGroup.orders[0]?.itad_lot?.arc_pu || `Lot #${selectedOrderGroup.itad_lot_id}`)
+                      : (selectedOrderGroup.orders[0]?.[selectedOrderGroup.type === 'bulk' ? 'bulk_order' : 'custom']?.company ||
+                     `${selectedOrderGroup.orders[0]?.[selectedOrderGroup.type === 'bulk' ? 'bulk_order' : 'custom']?.first_name} ${selectedOrderGroup.orders[0]?.[selectedOrderGroup.type === 'bulk' ? 'bulk_order' : 'custom']?.last_name}`)}
                   </div>
                 </div>
                 
@@ -1366,8 +1471,9 @@ export default function ListView() {
                     {selectedOrderGroup.orders.map((order) => {
                       const isCustom = selectedOrderGroup.type === 'custom';
                       const isBulk = selectedOrderGroup.type === 'bulk';
+                      const isItad = selectedOrderGroup.type === 'itad';
                       const modelInfo = order.model_info ? JSON.parse(order.model_info) : { working_status: "working" };
-                      const orderDetails = isCustom ? order.custom : order.bulk_order;
+                      const orderDetails = isItad ? order.itad_lot : isCustom ? order.custom : order.bulk_order;
                       const customerName = orderDetails?.company || `${orderDetails?.first_name} ${orderDetails?.last_name}`;
                       const statusDate = order.status_value.created_at ? DateTime.fromSQL(order.status_value.created_at) : DateTime.now();
                       const now = DateTime.now();
@@ -1383,8 +1489,12 @@ export default function ListView() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-2">
                                 <div className={`w-2 h-2 rounded-full ${modelInfo.working_status === "working" ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                                <span className="text-sm font-bold text-gray-800">{isCustom ? `#${order.order_id || order.custom?.id} - ${order.id}` : `#${order.id}`}</span>
-                                {isCustom ? (
+                                <span className="text-sm font-bold text-gray-800">{isItad ? `#${order.itad_lot?.arc_pu || order.itad_lot_id} - ${order.id}` : isCustom ? `#${order.order_id || order.custom?.id} - ${order.id}` : `#${order.id}`}</span>
+                                {isItad ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
+                                    ITAD
+                                  </span>
+                                ) : isCustom ? (
                                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                                     Custom
                                   </span>
