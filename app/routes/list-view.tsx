@@ -629,7 +629,7 @@ export default function ListView() {
                       // If only 1 item, treat as regular order
                       if (group.orders.length === 1) {
                         const order = firstOrder;
-                        const modelInfo = JSON.parse(order.model_info);
+                        const modelInfo = order.model_info ? JSON.parse(order.model_info) : { working_status: "working" };
                         const orderDetails = order.bulk_order;
                         const _md = order.model_desc || order.description || "";
                         const orderString = _md.length > 80 ? _md.substr(0, 80) + "…" : _md;
@@ -916,7 +916,7 @@ export default function ListView() {
                         orderDetails = order.custom;
                         orderString = orderDetails.company || `${orderDetails.first_name} ${orderDetails.last_name}`;
                       } else {
-                        modelInfo = JSON.parse(order.model_info);
+                        modelInfo = order.model_info ? JSON.parse(order.model_info) : { working_status: "working" };
                         orderDetails = isBulk ? order.bulk_order : order.order;
                         orderString = order.model_desc || order.description || "";
                         if (orderString.length > 80) {

@@ -552,8 +552,11 @@ export default function StatusSection({
                   details = order.details ? JSON.parse(order.details) : {};
                   orderDetails = isItad ? order.itad_lot : order.custom;
                 } else {
-                  modelInfo = JSON.parse(order.model_info);
-                  details = JSON.parse(order.details);
+                  // Guard: some regular orders carry a null model_info/details,
+                  // which would make JSON.parse(null) return null and crash on
+                  // modelInfo.working_status below.
+                  modelInfo = order.model_info ? JSON.parse(order.model_info) : { working_status: "working" };
+                  details = order.details ? JSON.parse(order.details) : {};
                   orderDetails = order.order;
                   if (isBulk) {
                     orderDetails = order.bulk_order;
