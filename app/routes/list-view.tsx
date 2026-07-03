@@ -256,14 +256,17 @@ export default function ListView() {
   // Show login form if not authenticated
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-          <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">
-            Status Screen Access
+      <div className="min-h-screen bg-gr-beige flex items-center justify-center px-4">
+        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md border border-gr-beige-light">
+          <div className="flex justify-center mb-6">
+            <img src="/GR_Logo1B.svg" alt="GoRoostr" className="h-12" />
+          </div>
+          <h2 className="text-xl font-bold text-center text-gr-black mb-6">
+            Order Status Screen
           </h2>
           <form onSubmit={handleLogin}>
             <div className="mb-4">
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="password" className="block text-sm font-semibold text-gr-black mb-2">
                 Password
               </label>
               <input
@@ -271,7 +274,7 @@ export default function ListView() {
                 id="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-gr-black rounded-md focus:outline-none focus:ring-2 focus:ring-gr-green focus:border-transparent bg-white"
                 placeholder="Enter password"
                 required
               />
@@ -283,7 +286,7 @@ export default function ListView() {
             )}
             <button
               type="submit"
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+              className="w-full bg-gr-green text-gr-black font-bold py-2 px-4 rounded-md border border-gr-black hover:bg-gr-green-hover focus:outline-none focus:ring-2 focus:ring-gr-green focus:ring-offset-2 transition-colors"
             >
               Access Status Screen
             </button>
@@ -493,11 +496,11 @@ export default function ListView() {
     .filter(Boolean); // Remove any null entries
 
   return (
-    <main className="relative min-h-screen bg-gray-100">
+    <main className="relative min-h-screen bg-gr-beige-light">
       {/* Main Content */}
       <div className="p-4 pr-24">
         <div className="w-full">
-          <h1 className="text-2xl font-bold text-gray-800 mb-4">Order Status List</h1>
+          <h1 className="text-2xl font-bold text-gr-black mb-4">Order Status List</h1>
           
           {/* Status Filter Dropdown */}
           <div className="bg-white rounded-lg p-3 mb-4 shadow-sm border">
@@ -1021,9 +1024,16 @@ export default function ListView() {
         </div>
       </div>
       
-      {/* Vertical Sidebar */}
-      <div className="fixed right-0 top-0 bottom-0 w-20 bg-gray-800 bg-opacity-95 backdrop-blur-sm flex flex-col justify-between p-2 text-white z-40">
+      {/* Vertical Sidebar — brand dark green */}
+      <div className="fixed right-0 top-0 bottom-0 w-20 bg-gr-green-dark flex flex-col justify-between p-2 text-white z-40">
         <div className="space-y-2">
+          {/* Brand mark on a beige plate so the dark-green wordmark reads. */}
+          <div className="flex justify-center pt-1 pb-3">
+            <div className="bg-gr-beige-light rounded-md px-2 py-1.5 flex items-center justify-center">
+              <img src="/GR_Logo1B.svg" alt="GoRoostr" className="h-5" />
+            </div>
+          </div>
+
           <div className="flex flex-col items-center gap-1">
             <div className="flex items-center gap-1">
               <div className={`w-2 h-2 rounded-full ${getConnectionColor()}`}></div>
@@ -1036,14 +1046,14 @@ export default function ListView() {
                 </div>
               )}
             </div>
-            <span className="text-xs font-semibold">LIVE</span>
+            <span className="text-xs font-semibold text-gr-green">LIVE</span>
           </div>
-          
+
           {/* Navigation */}
-          <div className="py-4 border-t border-b border-gray-600">
-            <Link 
-              to="/" 
-              className="block p-2 text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors"
+          <div className="py-4 border-t border-b border-gr-dark-hover">
+            <Link
+              to="/"
+              className="block p-2 text-gr-beige-light hover:text-white hover:bg-gr-dark-hover rounded transition-colors"
               title="Dashboard View"
               onClick={() => setIsNavigating(true)}
             >
@@ -1058,33 +1068,33 @@ export default function ListView() {
                 </svg>
               )}
             </Link>
-            <div className="p-2 text-white bg-gray-700 rounded mt-1" title="List View (Current)">
+            <div className="p-2 text-white bg-gr-dark-hover rounded mt-1" title="List View (Current)">
               <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
               </svg>
             </div>
           </div>
-          
+
           <div className="text-xs space-y-2 text-center">
             <div>
-              <div className="text-gray-300 text-xs">Updated</div>
+              <div className="text-gr-beige-light text-xs">Updated</div>
               <div className="font-semibold text-xs">{formatTime(lastUpdated)}</div>
             </div>
-            
+
             <div>
-              <div className="text-gray-300 text-xs">Total</div>
+              <div className="text-gr-beige-light text-xs">Total</div>
               <div className="font-bold text-sm">{totalOrders}</div>
             </div>
           </div>
         </div>
-        
+
         <div className="text-center space-y-2">
           <div className="text-lg font-bold">
             {currentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).replace(' AM', '').replace(' PM', '')}
           </div>
           <button
             onClick={handleLogout}
-            className="text-xs text-gray-400 hover:text-white transition-colors"
+            className="text-xs text-gr-beige-light hover:text-white transition-colors"
             title="Logout"
           >
             ⚠

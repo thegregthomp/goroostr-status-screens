@@ -391,17 +391,17 @@ export default function StatusSection({
     >
       {!titleOverride ? (
         <div className="header py-2 text-center flex items-center justify-center gap-2">
-          <span className="inline-block px-2 py-0.5 text-base font-bold bg-yellow-50 rounded-lg shadow-sm border border-yellow-100 flex items-center gap-1">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-base font-bold bg-white text-gr-black rounded-lg shadow-sm border border-gr-black/10">
             <span className="text-sm">{getStatusIcon(statusKey)}</span>
             {statusOptions.find((option) => option.key == statusKey).name}
           </span>
-          <span className="inline-block px-2 py-0.5 text-base font-bold bg-yellow-200 rounded-lg shadow-sm border border-yellow-300">
+          <span className="inline-block px-2 py-0.5 text-base font-bold bg-gr-green text-gr-black rounded-lg shadow-sm border border-gr-black/10">
             {filteredOrders.length}
           </span>
         </div>
       ) : (
         <div className="header py-2 text-center">
-          <span className="inline-block px-2 py-0.5 text-base font-bold bg-yellow-200 rounded-lg shadow-sm border border-yellow-300">
+          <span className="inline-block px-2 py-0.5 text-base font-bold bg-gr-green text-gr-black rounded-lg shadow-sm border border-gr-black/10">
             {titleOverride}
           </span>
         </div>
@@ -614,7 +614,7 @@ export default function StatusSection({
                           <span>
                             {modelInfo.working_status == "working" ? (
                               <span
-                                className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-emerald-800 text-xs font-medium"
+                                className="mr-1 inline-flex h-2 w-2 items-center rounded-full bg-gr-green-dark text-xs font-medium"
                                 style={{ marginBottom: "1px" }}
                               ></span>
                             ) : (

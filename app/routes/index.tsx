@@ -269,14 +269,21 @@ export default function Index() {
   // Show login form if not authenticated (must be after all hooks)
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-          <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">
-            Status Screen Access
+      <div className="min-h-screen bg-gr-beige flex items-center justify-center px-4">
+        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md border border-gr-beige-light">
+          <div className="flex justify-center mb-6">
+            <img
+              src="/GR_Logo1B.svg"
+              alt="GoRoostr"
+              className="h-12"
+            />
+          </div>
+          <h2 className="text-xl font-bold text-center text-gr-black mb-6">
+            Order Status Screen
           </h2>
           <form onSubmit={handleLogin}>
             <div className="mb-4">
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="password" className="block text-sm font-semibold text-gr-black mb-2">
                 Password
               </label>
               <input
@@ -284,7 +291,7 @@ export default function Index() {
                 id="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-gr-black rounded-md focus:outline-none focus:ring-2 focus:ring-gr-green focus:border-transparent bg-white"
                 placeholder="Enter password"
                 required
               />
@@ -296,7 +303,7 @@ export default function Index() {
             )}
             <button
               type="submit"
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+              className="w-full bg-gr-green text-gr-black font-bold py-2 px-4 rounded-md border border-gr-black hover:bg-gr-green-hover focus:outline-none focus:ring-2 focus:ring-gr-green focus:ring-offset-2 transition-colors"
             >
               Access Status Screen
             </button>
@@ -320,15 +327,16 @@ export default function Index() {
     return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
   };
 
-  // Connection status indicator
+  // Connection status indicator — brand green when live, semantic
+  // yellow/red for degraded states so it still reads at a glance.
   const getConnectionColor = () => {
     switch(connectionStatus) {
-      case 'connected': return 'bg-green-400';
+      case 'connected': return 'bg-gr-green';
       case 'connecting': return 'bg-yellow-400';
-      case 'disconnected': 
+      case 'disconnected':
       case 'failed':
       case 'error': return 'bg-red-400';
-      default: return 'bg-gray-400';
+      default: return 'bg-gr-gray-disabled';
     }
   };
 
@@ -364,7 +372,7 @@ export default function Index() {
             className="grid-container main-grid grid w-full grid-cols-3 gap-0"
           >
             <StatusSection
-              color="bg-emerald-50"
+              color="bg-gr-beige-light"
               orders={orders}
               statusKey={"OD"}
               statusOptions={status_options}
@@ -372,7 +380,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-200"
+              color="bg-gr-green-light"
               orders={orders}
               statusKey={"IP"}
               statusOptions={status_options}
@@ -380,7 +388,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-400"
+              color="bg-gr-beige"
               orders={orders}
               statusKey={"PN"}
               statusOptions={status_options}
@@ -388,7 +396,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-100"
+              color="bg-white"
               orders={orders}
               statusKey={"DL"}
               statusOptions={status_options}
@@ -396,7 +404,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-300"
+              color="bg-gr-green-light"
               orders={orders}
               statusKey={"IR"}
               statusOptions={status_options}
@@ -404,7 +412,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-500"
+              color="bg-gr-green"
               orders={orders}
               statusKey={"PY"}
               statusOptions={status_options}
@@ -419,7 +427,7 @@ export default function Index() {
             className="grid-container main-grid grid w-full grid-cols-2 gap-0"
           >
             <StatusSection
-              color="bg-emerald-50"
+              color="bg-gr-beige-light"
               orders={orders}
               statusKey={"OD"}
               statusOptions={status_options}
@@ -427,7 +435,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-100"
+              color="bg-white"
               orders={orders}
               statusKey={"DL"}
               statusOptions={status_options}
@@ -435,7 +443,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-200"
+              color="bg-gr-green-light"
               orders={orders}
               statusKey={"IP"}
               statusOptions={status_options}
@@ -443,7 +451,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-300"
+              color="bg-gr-green-light"
               orders={orders}
               statusKey={"IR"}
               statusOptions={status_options}
@@ -451,7 +459,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-400"
+              color="bg-gr-beige"
               orders={orders}
               statusKey={"PN"}
               statusOptions={status_options}
@@ -459,7 +467,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-emerald-500"
+              color="bg-gr-green"
               orders={orders}
               statusKey={"PY"}
               statusOptions={status_options}
@@ -471,9 +479,22 @@ export default function Index() {
       )}
       </div>
       
-      {/* Vertical Sidebar */}
-      <div className="w-20 bg-gray-800 bg-opacity-95 backdrop-blur-sm flex flex-col justify-between p-2 text-white">
+      {/* Vertical Sidebar — brand dark green */}
+      <div className="w-20 bg-gr-green-dark flex flex-col justify-between p-2 text-white">
         <div className="space-y-2">
+          {/* Brand mark. Logo is dark green on white, so we wrap it in
+              a subtle beige plate so the "GoRoostr" wordmark still reads
+              against the dark green sidebar. */}
+          <div className="flex justify-center pt-1 pb-3">
+            <div className="bg-gr-beige-light rounded-md px-2 py-1.5 flex items-center justify-center">
+              <img
+                src="/GR_Logo1B.svg"
+                alt="GoRoostr"
+                className="h-5"
+              />
+            </div>
+          </div>
+
           <div className="flex flex-col items-center gap-1">
             <div className="flex items-center gap-1">
               <div className={`w-2 h-2 rounded-full ${getConnectionColor()}`}></div>
@@ -486,19 +507,19 @@ export default function Index() {
                 </div>
               )}
             </div>
-            <span className="text-xs font-semibold">LIVE</span>
+            <span className="text-xs font-semibold text-gr-green">LIVE</span>
           </div>
-          
+
           {/* Navigation */}
-          <div className="py-4 border-t border-b border-gray-600">
-            <div className="p-2 text-white bg-gray-700 rounded" title="Dashboard View (Current)">
+          <div className="py-4 border-t border-b border-gr-dark-hover">
+            <div className="p-2 text-white bg-gr-dark-hover rounded" title="Dashboard View (Current)">
               <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
               </svg>
             </div>
-            <Link 
-              to="/list-view" 
-              className="block p-2 mt-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            <Link
+              to="/list-view"
+              className="block p-2 mt-1 text-gr-beige-light hover:text-white hover:bg-gr-dark-hover rounded transition-colors"
               title="List View"
               onClick={() => setIsNavigating(true)}
             >
@@ -514,27 +535,27 @@ export default function Index() {
               )}
             </Link>
           </div>
-          
+
           <div className="text-xs space-y-2 text-center">
             <div>
-              <div className="text-gray-300 text-xs">Updated</div>
+              <div className="text-gr-beige-light text-xs">Updated</div>
               <div className="font-semibold text-xs">{formatTime(lastUpdated)}</div>
             </div>
-            
+
             <div>
-              <div className="text-gray-300 text-xs">Total</div>
+              <div className="text-gr-beige-light text-xs">Total</div>
               <div className="font-bold text-sm">{totalOrders}</div>
             </div>
           </div>
         </div>
-        
+
         <div className="text-center space-y-2">
           <div className="text-lg font-bold">
             {currentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).replace(' AM', '').replace(' PM', '')}
           </div>
           <button
             onClick={handleLogout}
-            className="text-xs text-gray-400 hover:text-white transition-colors"
+            className="text-xs text-gr-beige-light hover:text-white transition-colors"
             title="Logout"
           >
             ⚠
@@ -544,8 +565,8 @@ export default function Index() {
 
       {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={closeModal}>
-          <div className="bg-white rounded-lg p-6 max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-gr-black bg-opacity-60 flex items-center justify-center z-50 px-4" onClick={closeModal}>
+          <div className="bg-white rounded-lg p-6 max-w-4xl max-h-[90vh] overflow-y-auto border border-gr-beige-light shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
               <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-bold">
@@ -642,56 +663,56 @@ export default function Index() {
             {selectedOrder && (
               <div className="space-y-6">
                 {/* Order Overview */}
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h3 className="text-lg font-semibold mb-3">Order Overview</h3>
+                <div className="bg-gr-beige-light p-4 rounded-lg">
+                  <h3 className="text-lg font-bold mb-3 text-gr-black">Order Overview</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {/* Customer Name */}
                     <div>
-                      <span className="text-sm text-gray-600">Customer</span>
-                      <div className="font-semibold">
-                        {selectedOrder.custom ? 
+                      <span className="text-sm text-gr-gray-disabled">Customer</span>
+                      <div className="font-semibold text-gr-black">
+                        {selectedOrder.custom ?
                           (selectedOrder.custom.company || `${selectedOrder.custom.first_name} ${selectedOrder.custom.last_name}`) :
-                          selectedOrder.bulk_order ? 
+                          selectedOrder.bulk_order ?
                           (selectedOrder.bulk_order.company || `${selectedOrder.bulk_order.first_name} ${selectedOrder.bulk_order.last_name}`) :
-                          selectedOrder.order ? 
+                          selectedOrder.order ?
                           (selectedOrder.order.company || `${selectedOrder.order.first_name} ${selectedOrder.order.last_name}`) :
                           'Unknown Customer'
                         }
                       </div>
                     </div>
-                    
+
                     {/* Pricing - Only show for non-custom orders */}
                     {!selectedOrder.custom && selectedOrder.value && (
                       <div>
-                        <span className="text-sm text-gray-600">Quote Value</span>
-                        <div className="font-bold text-green-600">
+                        <span className="text-sm text-gr-gray-disabled">Quote Value</span>
+                        <div className="font-bold text-gr-green-dark">
                           ${parseFloat(selectedOrder.value).toFixed(2)}
                         </div>
                       </div>
                     )}
-                    
+
                     {!selectedOrder.custom && selectedOrder.total && (
                       <div>
-                        <span className="text-sm text-gray-600">Total</span>
-                        <div className="font-bold text-blue-600">
+                        <span className="text-sm text-gr-gray-disabled">Total</span>
+                        <div className="font-bold text-gr-green-dark">
                           ${parseFloat(selectedOrder.total).toFixed(2)}
                         </div>
                       </div>
                     )}
-                    
+
                     {!selectedOrder.custom && (selectedOrder.discount_amount || selectedOrder.discount) && (
                       <div>
-                        <span className="text-sm text-gray-600">Discount</span>
+                        <span className="text-sm text-gr-gray-disabled">Discount</span>
                         <div className="font-semibold text-red-600">
                           -${parseFloat(selectedOrder.discount_amount || selectedOrder.discount).toFixed(2)}
                         </div>
                       </div>
                     )}
-                    
+
                     {!selectedOrder.custom && selectedOrder.tax_amount && (
                       <div>
-                        <span className="text-sm text-gray-600">Tax</span>
-                        <div className="font-semibold text-gray-800">
+                        <span className="text-sm text-gr-gray-disabled">Tax</span>
+                        <div className="font-semibold text-gr-black">
                           ${parseFloat(selectedOrder.tax_amount).toFixed(2)}
                         </div>
                       </div>
@@ -700,8 +721,8 @@ export default function Index() {
                 </div>
 
                 {/* Product Details */}
-                <div className="bg-white border rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3">Product Details</h3>
+                <div className="bg-white border border-gr-beige-light rounded-lg p-4">
+                  <h3 className="text-lg font-bold mb-3 text-gr-black">Product Details</h3>
                   <div className="space-y-3">
                     <div>
                       <span className="text-sm text-gray-600">Description</span>
