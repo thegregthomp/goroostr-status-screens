@@ -257,7 +257,7 @@ export default function ListView() {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-gr-beige flex items-center justify-center px-4">
-        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md border border-gr-beige-light">
+        <div className="bg-white p-8 rounded-2xl shadow-md w-full max-w-md border-2 border-gr-black">
           <div className="flex justify-center mb-6">
             <img src="/GR_Logo1B.svg" alt="GoRoostr" className="h-12" />
           </div>
@@ -274,7 +274,7 @@ export default function ListView() {
                 id="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-gr-black rounded-md focus:outline-none focus:ring-2 focus:ring-gr-green focus:border-transparent bg-white"
+                className="w-full px-3 py-2 border-2 border-gr-black rounded-md focus:outline-none focus:ring-2 focus:ring-gr-green bg-white"
                 placeholder="Enter password"
                 required
               />
@@ -286,7 +286,7 @@ export default function ListView() {
             )}
             <button
               type="submit"
-              className="w-full bg-gr-green text-gr-black font-bold py-2 px-4 rounded-md border border-gr-black hover:bg-gr-green-hover focus:outline-none focus:ring-2 focus:ring-gr-green focus:ring-offset-2 transition-colors"
+              className="w-full bg-gr-green text-gr-black font-bold py-2 px-4 rounded-full border-2 border-gr-black hover:bg-gr-green-hover focus:outline-none focus:ring-2 focus:ring-gr-green focus:ring-offset-2 transition-colors"
             >
               Access Status Screen
             </button>
@@ -334,13 +334,16 @@ export default function ListView() {
   // Status color mapping
   const getStatusColor = (statusKey) => {
     switch (statusKey) {
-      case 'OD': return 'bg-emerald-50 border-emerald-200';
-      case 'IP': return 'bg-emerald-200 border-emerald-300';
-      case 'PN': return 'bg-emerald-400 border-emerald-500';
-      case 'DL': return 'bg-emerald-100 border-emerald-200';
-      case 'IR': return 'bg-emerald-300 border-emerald-400';
-      case 'PY': return 'bg-emerald-500 border-emerald-600';
-      default: return 'bg-gray-50 border-gray-200';
+      // Match the dashboard's brand mint ramp so the two views feel
+      // like the same product. Border is always brand-black for the
+      // heavy "black outlined green pill" look from goroostr.com.
+      case 'OD': return 'bg-gr-mint-50 border-gr-black';
+      case 'IP': return 'bg-gr-mint-200 border-gr-black';
+      case 'PN': return 'bg-gr-mint-400 border-gr-black';
+      case 'DL': return 'bg-gr-mint-100 border-gr-black';
+      case 'IR': return 'bg-gr-mint-300 border-gr-black';
+      case 'PY': return 'bg-gr-mint-500 border-gr-black';
+      default:   return 'bg-gr-beige-light border-gr-black';
     }
   };
 
@@ -503,12 +506,12 @@ export default function ListView() {
           <h1 className="text-2xl font-bold text-gr-black mb-4">Order Status List</h1>
           
           {/* Status Filter Dropdown */}
-          <div className="bg-white rounded-lg p-3 mb-4 shadow-sm border">
+          <div className="bg-white rounded-lg p-3 mb-4 border-2 border-gr-black">
             <div className="flex items-center justify-end">
               <div className="relative dropdown-container">
                 <button
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded border text-sm font-medium text-gray-700 transition-colors"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-gr-beige-light rounded-full border border-gr-black text-sm font-semibold text-gr-black transition-colors"
                 >
                   <span>{visibleCount} of 6 selected</span>
                   <svg className={`w-4 h-4 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -517,7 +520,7 @@ export default function ListView() {
                 </button>
                 
                 {isDropdownOpen && (
-                  <div className="absolute right-0 mt-1 w-64 bg-white border rounded-lg shadow-lg z-10">
+                  <div className="absolute right-0 mt-1 w-64 bg-white border-2 border-gr-black rounded-lg shadow-lg z-10">
                     <div className="p-2 border-b">
                       <div className="flex gap-2">
                         <button
@@ -600,18 +603,18 @@ export default function ListView() {
               // Custom orders typically don't have monetary values, so we skip them
 
               return (
-                <div key={status.key} className={`border-2 rounded-lg p-4 ${getStatusColor(status.key)}`}>
+                <div key={status.key} className={`border-2 rounded-2xl p-4 ${getStatusColor(status.key)}`}>
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <span className="text-lg">{getStatusIcon(status.key)}</span>
-                      <h2 className="text-lg font-bold text-gray-800">{status.name}</h2>
-                      <span className="bg-white px-2 py-0.5 rounded-full text-xs font-semibold text-gray-700 border">
+                      <h2 className="text-lg font-bold text-gr-black">{status.name}</h2>
+                      <span className="bg-white px-2 py-0.5 rounded-full text-xs font-bold text-gr-black border-2 border-gr-black">
                         {status.totalOrders}
                       </span>
                     </div>
                     {totalValue > 0 && (
-                      <div className="bg-white px-3 py-1.5 rounded-lg shadow-sm border">
-                        <div className="text-base font-bold text-green-600">
+                      <div className="bg-white px-3 py-1.5 rounded-lg border-2 border-gr-black">
+                        <div className="text-base font-bold text-gr-green-dark">
                           ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
@@ -643,7 +646,7 @@ export default function ListView() {
                         return (
                           <div 
                             key={`bulk-single-${order.id}`}
-                            className="bg-white rounded p-1.5 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                            className="bg-white rounded-md p-1.5 border border-gr-black cursor-pointer hover:bg-gr-beige-light transition-colors"
                             onClick={() => handleOrderClick(order)}
                           >
                             <div className="flex justify-between items-start">
@@ -705,7 +708,7 @@ export default function ListView() {
                       return (
                         <div 
                           key={`bulk-${group.order_id}`}
-                          className={`${isTradeIn ? 'bg-rose-100 border-rose-200' : 'bg-purple-100 border-purple-200'} border rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow`}
+                          className={`${isTradeIn ? 'bg-rose-100 hover:bg-rose-200' : 'bg-purple-100 hover:bg-purple-200'} border border-gr-black rounded-md p-1.5 cursor-pointer transition-colors`}
                           onClick={() => handleGroupClick(group, 'Bulk')}
                         >
                           <div className="flex justify-between items-start">
@@ -752,7 +755,7 @@ export default function ListView() {
                         return (
                           <div 
                             key={`custom-single-${order.id}`}
-                            className="bg-white rounded p-1.5 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                            className="bg-white rounded-md p-1.5 border border-gr-black cursor-pointer hover:bg-gr-beige-light transition-colors"
                             onClick={() => handleOrderClick(order)}
                           >
                             <div className="flex justify-between items-start">
@@ -801,7 +804,7 @@ export default function ListView() {
                       return (
                         <div 
                           key={`custom-${group.order_id}`}
-                          className="bg-blue-100 border border-blue-200 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                          className="bg-blue-100 border border-gr-black rounded-md p-1.5 cursor-pointer hover:bg-blue-200 transition-colors"
                           onClick={() => handleGroupClick(group, 'Custom')}
                         >
                           <div className="flex justify-between items-start">
@@ -845,7 +848,7 @@ export default function ListView() {
                         return (
                           <div
                             key={`itad-single-${order.id}`}
-                            className="bg-white rounded p-1.5 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                            className="bg-white rounded-md p-1.5 border border-gr-black cursor-pointer hover:bg-gr-beige-light transition-colors"
                             onClick={() => handleOrderClick(order)}
                           >
                             <div className="flex justify-between items-start">
@@ -880,7 +883,7 @@ export default function ListView() {
                       return (
                         <div
                           key={`itad-${group.itad_lot_id}`}
-                          className="bg-teal-100 border border-teal-200 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                          className="bg-teal-100 border border-gr-black rounded-md p-1.5 cursor-pointer hover:bg-teal-200 transition-colors"
                           onClick={() => handleGroupClick(group, 'ITAD')}
                         >
                           <div className="flex justify-between items-start">
@@ -934,7 +937,7 @@ export default function ListView() {
                       return (
                         <div 
                           key={order.id}
-                          className="bg-white rounded p-1.5 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                          className="bg-white rounded-md p-1.5 border border-gr-black cursor-pointer hover:bg-gr-beige-light transition-colors"
                           onClick={() => handleOrderClick(order)}
                         >
                           <div className="flex justify-between items-start">
@@ -1104,8 +1107,8 @@ export default function ListView() {
 
       {/* Modal - Full detailed version */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={closeModal}>
-          <div className="bg-white rounded-lg p-6 max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-gr-black bg-opacity-60 flex items-center justify-center z-50 px-4" onClick={closeModal}>
+          <div className="bg-white rounded-2xl p-6 max-w-4xl max-h-[90vh] overflow-y-auto border-2 border-gr-black shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
               <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-bold">
@@ -1492,7 +1495,7 @@ export default function ListView() {
                       return (
                         <div 
                           key={order.id}
-                          className="bg-white rounded p-3 shadow-sm border cursor-pointer hover:shadow-md transition-shadow"
+                          className="bg-white rounded-md p-3 border border-gr-black cursor-pointer hover:bg-gr-beige-light transition-colors"
                           onClick={() => handleOrderClick(order)}
                         >
                           <div className="flex justify-between items-start">

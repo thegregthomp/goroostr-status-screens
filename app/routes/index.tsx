@@ -270,7 +270,7 @@ export default function Index() {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-gr-beige flex items-center justify-center px-4">
-        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md border border-gr-beige-light">
+        <div className="bg-white p-8 rounded-2xl shadow-md w-full max-w-md border-2 border-gr-black">
           <div className="flex justify-center mb-6">
             <img
               src="/GR_Logo1B.svg"
@@ -291,7 +291,7 @@ export default function Index() {
                 id="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-gr-black rounded-md focus:outline-none focus:ring-2 focus:ring-gr-green focus:border-transparent bg-white"
+                className="w-full px-3 py-2 border-2 border-gr-black rounded-md focus:outline-none focus:ring-2 focus:ring-gr-green bg-white"
                 placeholder="Enter password"
                 required
               />
@@ -303,7 +303,7 @@ export default function Index() {
             )}
             <button
               type="submit"
-              className="w-full bg-gr-green text-gr-black font-bold py-2 px-4 rounded-md border border-gr-black hover:bg-gr-green-hover focus:outline-none focus:ring-2 focus:ring-gr-green focus:ring-offset-2 transition-colors"
+              className="w-full bg-gr-green text-gr-black font-bold py-2 px-4 rounded-full border-2 border-gr-black hover:bg-gr-green-hover focus:outline-none focus:ring-2 focus:ring-gr-green focus:ring-offset-2 transition-colors"
             >
               Access Status Screen
             </button>
@@ -371,8 +371,13 @@ export default function Index() {
           <div
             className="grid-container main-grid grid w-full grid-cols-3 gap-0"
           >
+            {/* Landscape 3x2 grid — both rows ramp light→dark
+                left-to-right, and row 2 sits one shade darker than
+                row 1 at each column position. Mirrors the old
+                emerald 50/200/400 // 100/300/500 pattern with
+                brand-anchored mint tints. */}
             <StatusSection
-              color="bg-gr-beige-light"
+              color="bg-gr-mint-50"
               orders={orders}
               statusKey={"OD"}
               statusOptions={status_options}
@@ -380,7 +385,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-gr-green-light"
+              color="bg-gr-mint-200"
               orders={orders}
               statusKey={"IP"}
               statusOptions={status_options}
@@ -388,7 +393,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-gr-beige"
+              color="bg-gr-mint-400"
               orders={orders}
               statusKey={"PN"}
               statusOptions={status_options}
@@ -396,7 +401,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-white"
+              color="bg-gr-mint-100"
               orders={orders}
               statusKey={"DL"}
               statusOptions={status_options}
@@ -404,7 +409,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-gr-green-light"
+              color="bg-gr-mint-300"
               orders={orders}
               statusKey={"IR"}
               statusOptions={status_options}
@@ -412,7 +417,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-gr-green"
+              color="bg-gr-mint-500"
               orders={orders}
               statusKey={"PY"}
               statusOptions={status_options}
@@ -426,8 +431,11 @@ export default function Index() {
           <div
             className="grid-container main-grid grid w-full grid-cols-2 gap-0"
           >
+            {/* Portrait 2x3 grid — column-order layout, so read
+                top-to-bottom then left-to-right. Left column ramps
+                50/100/200; right column continues 300/400/500. */}
             <StatusSection
-              color="bg-gr-beige-light"
+              color="bg-gr-mint-50"
               orders={orders}
               statusKey={"OD"}
               statusOptions={status_options}
@@ -435,7 +443,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-white"
+              color="bg-gr-mint-300"
               orders={orders}
               statusKey={"DL"}
               statusOptions={status_options}
@@ -443,7 +451,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-gr-green-light"
+              color="bg-gr-mint-100"
               orders={orders}
               statusKey={"IP"}
               statusOptions={status_options}
@@ -451,7 +459,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-gr-green-light"
+              color="bg-gr-mint-400"
               orders={orders}
               statusKey={"IR"}
               statusOptions={status_options}
@@ -459,7 +467,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-gr-beige"
+              color="bg-gr-mint-200"
               orders={orders}
               statusKey={"PN"}
               statusOptions={status_options}
@@ -467,7 +475,7 @@ export default function Index() {
               onGroupClick={handleGroupClick}
             />
             <StatusSection
-              color="bg-gr-green"
+              color="bg-gr-mint-500"
               orders={orders}
               statusKey={"PY"}
               statusOptions={status_options}
@@ -566,7 +574,7 @@ export default function Index() {
       {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-gr-black bg-opacity-60 flex items-center justify-center z-50 px-4" onClick={closeModal}>
-          <div className="bg-white rounded-lg p-6 max-w-4xl max-h-[90vh] overflow-y-auto border border-gr-beige-light shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl p-6 max-w-4xl max-h-[90vh] overflow-y-auto border-2 border-gr-black shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
               <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-bold">

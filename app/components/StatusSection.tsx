@@ -386,22 +386,28 @@ export default function StatusSection({
 
   return (
     <div
-      className={`flex w-full flex-col ${color} ${isFullHeight}`}
+      // right + bottom borders on every section combine with the
+      // neighbouring section's edges to draw a single 2px black seam
+      // between the big status containers — matches the "thick black
+      // border" style from goroostr.com. The outer edges (top row's
+      // top, left col's left) already sit against the browser chrome
+      // and sidebar so no wrapper border is needed.
+      className={`flex w-full flex-col border-r-2 border-b-2 border-gr-black ${color} ${isFullHeight}`}
       ref={refContainer}
     >
       {!titleOverride ? (
         <div className="header py-2 text-center flex items-center justify-center gap-2">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-base font-bold bg-white text-gr-black rounded-lg shadow-sm border border-gr-black/10">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-base font-bold bg-white text-gr-black rounded-lg shadow-sm border-2 border-gr-black">
             <span className="text-sm">{getStatusIcon(statusKey)}</span>
             {statusOptions.find((option) => option.key == statusKey).name}
           </span>
-          <span className="inline-block px-2 py-0.5 text-base font-bold bg-gr-green text-gr-black rounded-lg shadow-sm border border-gr-black/10">
+          <span className="inline-block px-2 py-0.5 text-base font-bold bg-gr-green text-gr-black rounded-lg shadow-sm border-2 border-gr-black">
             {filteredOrders.length}
           </span>
         </div>
       ) : (
         <div className="header py-2 text-center">
-          <span className="inline-block px-2 py-0.5 text-base font-bold bg-gr-green text-gr-black rounded-lg shadow-sm border border-gr-black/10">
+          <span className="inline-block px-2 py-0.5 text-base font-bold bg-gr-green text-gr-black rounded-lg shadow-sm border-2 border-gr-black">
             {titleOverride}
           </span>
         </div>
@@ -423,7 +429,7 @@ export default function StatusSection({
                 return (
                   <React.Fragment key={orderSummary.count}>
                     <div
-                      className={`mb-1 flex justify-between rounded ${isTradeIn ? "bg-rose-100 hover:bg-rose-200" : "bg-purple-100 hover:bg-purple-200"} py-0.5 px-2 shadow-sm cursor-pointer transition-colors`}
+                      className={`mb-1.5 flex justify-between rounded-md border border-gr-black ${isTradeIn ? "bg-rose-100 hover:bg-rose-200" : "bg-purple-100 hover:bg-purple-200"} py-0.5 px-2 cursor-pointer transition-colors`}
                       onClick={() => onGroupClick(bulkOrders.find(group => group.order_id === orderSummary.order_id), 'Bulk')}
                     >
                       <div>
@@ -464,7 +470,7 @@ export default function StatusSection({
                 return (
                   <React.Fragment key={orderSummary.count}>
                     <div
-                      className={`mb-1 flex justify-between rounded bg-blue-100 py-0.5 px-2 shadow-sm cursor-pointer hover:bg-blue-200 transition-colors`}
+                      className={`mb-1.5 flex justify-between rounded-md border border-gr-black bg-blue-100 py-0.5 px-2 cursor-pointer hover:bg-blue-200 transition-colors`}
                       onClick={() => onGroupClick(customOrders.find(group => group.order_id === orderSummary.order_id), 'Custom')}
                     >
                       <div>
@@ -503,7 +509,7 @@ export default function StatusSection({
                 return (
                   <React.Fragment key={`itad-${orderSummary.itad_lot_id}-${orderSummary.count}`}>
                     <div
-                      className={`mb-1 flex justify-between rounded bg-teal-100 py-0.5 px-2 shadow-sm cursor-pointer hover:bg-teal-200 transition-colors`}
+                      className={`mb-1.5 flex justify-between rounded-md border border-gr-black bg-teal-100 py-0.5 px-2 cursor-pointer hover:bg-teal-200 transition-colors`}
                       onClick={() => onGroupClick(itadOrders.find(group => group.itad_lot_id === orderSummary.itad_lot_id), 'ITAD')}
                     >
                       <div>
@@ -607,7 +613,7 @@ export default function StatusSection({
                   <React.Fragment key={order.id}>
                     {order.status_value.status_option.key == statusKey && (
                       <div
-                        className={`${background} mb-1 flex justify-between rounded py-0.5 px-2 shadow-sm cursor-pointer hover:bg-gray-100 transition-colors`}
+                        className={`${background} mb-1 flex justify-between rounded-md border border-gr-black py-0.5 px-2 cursor-pointer hover:bg-gray-100 transition-colors`}
                         onClick={() => onOrderClick(order)}
                       >
                         <div>
