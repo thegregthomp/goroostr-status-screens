@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { LoaderArgs } from "@remix-run/node";
 import { useLoaderData, Link } from "@remix-run/react";
 import { json } from "@remix-run/node";
@@ -6,18 +6,20 @@ import stylesheetUrl from "../styles/global.css";
 import { getPendingShipments } from "~/models/orders.server";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
+import { animated, useSpring } from "@react-spring/web";
 
 /**
  * Shipper wall view — /pending-shipments.
  *
- * Powered by the API's /api/pending-shipments endpoint, which pulls
- * ShipStation v1 orderStatus=awaiting_shipment orders. Read-only,
- * auto-refreshes every 60 seconds. Optimized for a big-screen display
- * in the warehouse so shippers can see at a glance what to pull and
- * how long each order has been sitting sold-but-not-shipped.
+ * Powered by the API's /api/pending-shipments endpoint (ShipStation v1
+ * orderStatus=awaiting_shipment). Read-only, auto-refreshes every 60
+ * seconds. Card sizing matches list-view.tsx so the two dashboards feel
+ * cohesive; auto-scroll pattern borrowed from StatusSection.tsx so the
+ * wall cycles through a long list without human intervention.
  *
- * Rows are sorted oldest-sold first so the top of the list is always
- * the highest-priority pick.
+ * Rows are sorted oldest-sold first — the top of the list is always the
+ * highest-priority pick. Once ShipStation flips a row from
+ * awaiting_shipment → shipped, the next 60s poll drops it from the wall.
  */
 
 export function links() {
@@ -68,7 +70,6 @@ function ageString(iso?: string): string {
   return `${m}m ago`;
 }
 
-/** Hours since sold — used to color-code aging (>24h yellow, >48h orange, >72h red). */
 function hoursOld(iso?: string): number {
   if (!iso) return 0;
   const then = DateTime.fromISO(iso);
@@ -85,12 +86,8 @@ function ageBadgeClass(hours: number): string {
 
 /**
  * "No same-day ship pressure" flag.
- *
- * Rule: any sale placed TODAY after 14:00 local (America/New_York — the
- * warehouse timezone) doesn't have to ship today, so shippers can safely
- * deprioritize it against the pre-2pm sales. Older sales (any prior day)
- * always need to ship, no matter what time of day they were placed —
- * they never get this flag.
+ * Sale placed TODAY after 14:00 local (America/New_York) → no same-day
+ * requirement. Older sales always need to ship, no matter the time.
  */
 function isPost2pmToday(iso?: string): boolean {
   if (!iso) return false;
@@ -110,7 +107,7 @@ export default function PendingShipments() {
   const [loadError, setLoadError] = useState<string | null>(initial.error ?? null);
   const apiEndpoint = initial.apiEndpoint;
 
-  // Reuse the same cookie-based auth gate as the other status-screens views.
+  // Cookie-based auth gate — same pattern as list-view.tsx.
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -148,19 +145,15 @@ export default function PendingShipments() {
     }
   };
 
-  // Wall-clock ticker for the sidebar.
+  // Wall-clock ticker.
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // Auto-refresh the shipments list every 60s. Matches the polling
-  // cadence of the primary status views; ShipStation's awaiting-shipment
-  // set doesn't change fast enough to justify tighter polling.
   useInterval(async () => {
     setIsRefreshing(true);
     try {
-      // GOROOSTR_ENDPOINT is already the API base — no /api prefix here.
       const resp = await fetch(`${apiEndpoint}/pending-shipments`);
       const data = await resp.json();
       setShipments(data.shipments ?? []);
@@ -182,10 +175,9 @@ export default function PendingShipments() {
     });
   }, [shipments]);
 
-  // Flatten to one entry per item so each SKU gets its own card, matching
-  // the per-item card treatment of the other status-screens views. When
-  // an order has multiple items we render N adjacent cards sharing order
-  // #, sold-at, ship-to, and total. Preserves oldest-sold-first ordering.
+  // One card per item, matching list-view's per-item card pattern. When
+  // an order has multiple items we render N adjacent cards sharing the
+  // order #, sold-at chip, ship-to, and total-only-on-first-card.
   type CardEntry = {
     key: string;
     order: PendingShipment;
@@ -198,8 +190,6 @@ export default function PendingShipments() {
     for (const o of sorted) {
       const items = o.items ?? [];
       if (items.length === 0) {
-        // Order with no items array — still render one placeholder card
-        // so the shipper sees the order sitting there.
         out.push({
           key: `${o.orderId ?? o.orderNumber}-none`,
           order: o,
@@ -221,6 +211,86 @@ export default function PendingShipments() {
     }
     return out;
   }, [sorted]);
+
+  // Auto-scroll (spring pattern adapted from StatusSection.tsx). If the
+  // card grid overflows the visible container, animate y from 0 → -dist
+  // over a duration that scales with content length, hold, then animate
+  // back. Wheel / touch pauses auto-scroll for 5s so a shipper can nudge
+  // the view manually if they need to.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const dataRef = useRef<HTMLDivElement | null>(null);
+  const scrollDivRef = useRef<HTMLDivElement | null>(null);
+  const [isLargerThanContainer, setIsLargerThanContainer] = useState(false);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const animCfgRef = useRef({ dataHeight: 0, containerHeight: 0 });
+  const userScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [styles, api] = useSpring(() => ({ y: 0 }));
+
+  // Measure heights whenever cards change (poll → new cards) so we know
+  // whether auto-scroll needs to engage. Small delay so the DOM has
+  // painted the new content before we sample.
+  useEffect(() => {
+    if (!containerRef.current || !dataRef.current) return;
+    const t = setTimeout(() => {
+      if (!containerRef.current || !dataRef.current) return;
+      const containerHeight = containerRef.current.offsetHeight;
+      const dataHeight = dataRef.current.clientHeight;
+      animCfgRef.current = { dataHeight, containerHeight };
+      setIsLargerThanContainer(dataHeight > containerHeight);
+    }, 100);
+    return () => clearTimeout(t);
+  }, [cards.length]);
+
+  // Pause auto-scroll for 5s on user wheel / touch interaction.
+  useEffect(() => {
+    const el = scrollDivRef.current;
+    if (!el) return;
+    const pause = () => {
+      setIsUserScrolling(true);
+      if (userScrollTimeoutRef.current) clearTimeout(userScrollTimeoutRef.current);
+      userScrollTimeoutRef.current = setTimeout(() => setIsUserScrolling(false), 5000);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (!isLargerThanContainer) return;
+      e.preventDefault();
+      const { dataHeight, containerHeight } = animCfgRef.current;
+      const maxScroll = -(dataHeight - containerHeight + 25);
+      const currentY = styles.y.get();
+      const newY = Math.max(maxScroll, Math.min(0, currentY - e.deltaY));
+      api.start({ y: newY, config: { duration: 100 } });
+      pause();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("touchstart", pause);
+    el.addEventListener("touchmove", pause);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", pause);
+      el.removeEventListener("touchmove", pause);
+      if (userScrollTimeoutRef.current) clearTimeout(userScrollTimeoutRef.current);
+    };
+  }, [api, styles.y, isLargerThanContainer]);
+
+  // Auto-scroll cycle. Fires every 30s; only actually animates when the
+  // content overflows AND the user isn't currently interacting.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!isLargerThanContainer || isUserScrolling) return;
+      const { dataHeight, containerHeight } = animCfgRef.current;
+      const scrollDistance = dataHeight - containerHeight;
+      // Duration formula from StatusSection: 8s base, +1s per 200px of
+      // extra content, capped at 20s. Pause 5s between cycles.
+      const dur = Math.min(20000, Math.max(8000, 8000 + (scrollDistance / 200) * 1000));
+      api.start({ from: { y: 0 }, to: { y: -scrollDistance - 25 }, config: { duration: dur } });
+      api.start({
+        from: { y: -scrollDistance - 25 },
+        to: { y: 0 },
+        delay: dur + 5000,
+        config: { duration: dur },
+      });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [api, isLargerThanContainer, isUserScrolling]);
 
   const formatTime = (d: Date) =>
     d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -264,135 +334,137 @@ export default function PendingShipments() {
   const totalValue = sorted.reduce((s, o) => s + Number(o.orderTotal ?? 0), 0);
 
   return (
-    <main className="relative min-h-screen bg-gr-beige-light">
-      <div className="p-6 pr-24">
-        <div className="w-full">
-          <div className="flex items-baseline justify-between mb-6">
-            <h1 className="text-4xl font-bold text-gr-black">Pending Shipments</h1>
-            <div className="text-2xl text-gr-black">
-              <span className="font-bold">{cards.length}</span>
-              <span className="text-gr-black/70 ml-2">items · {sorted.length} orders</span>
-              {totalValue > 0 && (
-                <span className="ml-4 font-bold text-gr-green-dark">
-                  ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                </span>
-              )}
+    <main className="relative h-screen overflow-hidden bg-gr-beige-light">
+      <div className="h-full flex flex-col p-4 pr-24">
+        {/* Header — fixed height so the scroll container below owns the rest. */}
+        <div className="flex-shrink-0 flex items-baseline justify-between mb-3">
+          <h1 className="text-2xl font-bold text-gr-black">Pending Shipments</h1>
+          <div className="text-sm text-gr-black/80">
+            <span className="font-bold">{cards.length}</span>
+            <span className="text-gr-black/60 ml-1">items · {sorted.length} orders</span>
+            {totalValue > 0 && (
+              <span className="ml-3 font-semibold text-gr-green-dark">
+                ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {loadError && (
+          <div className="flex-shrink-0 mb-3 border-2 border-red-400 bg-red-50 text-red-800 rounded-lg px-3 py-2 text-sm">
+            Couldn't refresh shipments: {loadError}
+          </div>
+        )}
+
+        {cards.length === 0 && !loadError && (
+          <div className="flex-shrink-0 border-2 border-gr-black bg-white rounded-2xl p-8 text-center">
+            <div className="text-4xl mb-2">✅</div>
+            <div className="text-lg font-bold text-gr-black">You're all caught up.</div>
+            <div className="text-sm text-gr-black/70 mt-1">No orders currently awaiting shipment.</div>
+          </div>
+        )}
+
+        {cards.length > 0 && (
+          // Fixed-height scroll host. Auto-scroll animates the inner
+          // animated.div's y-transform when contents overflow.
+          <div ref={containerRef} className="flex-1 overflow-hidden">
+            <div ref={scrollDivRef} className="h-full overflow-hidden">
+              <animated.div
+                ref={dataRef}
+                style={{
+                  transform: styles.y.to((y) => `translate3d(0, ${y}px, 0)`),
+                }}
+              >
+                {/* 3-column card grid, matching list-view.tsx sizing so the
+                    two dashboards feel like the same product. Compact
+                    p-1.5 cards, sm/xs text hierarchy. */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  {cards.map((c) => {
+                    const o = c.order;
+                    const hrs = hoursOld(o.orderDate);
+                    const post2pm = isPost2pmToday(o.orderDate);
+                    const shipCity = [o.shipTo?.city, o.shipTo?.state].filter(Boolean).join(", ");
+                    const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
+                    const quantity = c.item.quantity ?? 1;
+                    return (
+                      <div
+                        key={c.key}
+                        className={`rounded-md p-1.5 border transition-colors ${
+                          post2pm
+                            ? "bg-sky-50 border-sky-400"
+                            : "bg-white border-gr-black"
+                        }`}
+                      >
+                        {/* Top row: order # + optional item n-of-m + age chip */}
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <span className="text-sm font-bold text-gray-800">
+                              #{o.orderNumber ?? o.orderId}
+                            </span>
+                            {c.itemCount > 1 && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-300">
+                                {c.itemIndex + 1}/{c.itemCount}
+                              </span>
+                            )}
+                            {post2pm && (
+                              <span
+                                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-300"
+                                title="Sold after 2 PM local — no same-day ship requirement"
+                              >
+                                Next-day OK
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border flex-shrink-0 ${ageBadgeClass(hrs)}`}
+                            title={o.orderDate ?? ""}
+                          >
+                            {ageString(o.orderDate)}
+                          </span>
+                        </div>
+
+                        {/* SKU line — primary "what to pull" — larger than model info */}
+                        <div className="mb-0.5">
+                          <div className="font-mono text-sm font-bold text-gray-900 leading-tight truncate">
+                            {c.item.sku ?? "—"}
+                            {quantity > 1 && (
+                              <span className="ml-1 text-gr-green-dark">× {quantity}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Model info under SKU, smaller */}
+                        {c.item.name && (
+                          <div className="text-xs text-gray-600 mb-1 truncate" title={c.item.name}>
+                            {c.item.name}
+                          </div>
+                        )}
+
+                        {/* Footer: customer + city + total */}
+                        <div className="flex items-end justify-between gap-2">
+                          <div className="text-xs text-gray-600 min-w-0 flex-1">
+                            <div className="truncate font-medium">{customer}</div>
+                            {shipCity && (
+                              <div className="truncate text-gray-500">{shipCity}</div>
+                            )}
+                          </div>
+                          {o.orderTotal !== undefined && c.itemIndex === 0 && (
+                            <div className="text-base font-bold text-green-600 flex-shrink-0">
+                              ${Number(o.orderTotal).toFixed(2)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </animated.div>
             </div>
           </div>
-
-          {loadError && (
-            <div className="mb-4 border-2 border-red-400 bg-red-50 text-red-800 rounded-lg px-4 py-3 text-xl">
-              Couldn't refresh shipments: {loadError}
-            </div>
-          )}
-
-          {cards.length === 0 && !loadError && (
-            <div className="border-2 border-gr-black bg-white rounded-2xl p-16 text-center">
-              <div className="text-8xl mb-4">✅</div>
-              <div className="text-4xl font-bold text-gr-black">You're all caught up.</div>
-              <div className="text-xl text-gr-black/70 mt-3">No orders currently awaiting shipment.</div>
-            </div>
-          )}
-
-          {cards.length > 0 && (
-            // 40" TV target: 2 columns keeps text large enough to read from
-            // across the shop floor. Cards are self-contained with the sold-at
-            // + order # up top, SKU big and centered, model info smaller
-            // beneath, ship-to + total pinned to the bottom.
-            <div className="grid grid-cols-2 gap-4">
-              {cards.map((c) => {
-                const o = c.order;
-                const hrs = hoursOld(o.orderDate);
-                const post2pm = isPost2pmToday(o.orderDate);
-                const shipCity = [o.shipTo?.city, o.shipTo?.state].filter(Boolean).join(", ");
-                const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
-                const quantity = c.item.quantity ?? 1;
-                return (
-                  <div
-                    key={c.key}
-                    // Soft sky tint on the "sold after 2pm today, no ship-today
-                    // pressure" cards, plus its own accent border so it reads
-                    // as visually distinct at a glance from across the room.
-                    className={`rounded-2xl border-2 p-4 ${
-                      post2pm
-                        ? "bg-sky-50 border-sky-400"
-                        : "bg-white border-gr-black"
-                    }`}
-                  >
-                    {/* Header — order # + sold-at + optional multi-item marker */}
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl font-bold text-gr-black">
-                          #{o.orderNumber ?? o.orderId}
-                        </span>
-                        {c.itemCount > 1 && (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-base font-semibold bg-gr-beige text-gr-black border border-gr-black">
-                            Item {c.itemIndex + 1} of {c.itemCount}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <span
-                          className={`inline-flex items-center px-3 py-1 rounded-full text-lg font-bold border-2 ${ageBadgeClass(hrs)}`}
-                          title={o.orderDate ?? ""}
-                        >
-                          {ageString(o.orderDate)}
-                        </span>
-                        {post2pm && (
-                          <span
-                            className="inline-flex items-center px-3 py-1 rounded-full text-base font-bold bg-sky-100 text-sky-800 border-2 border-sky-400"
-                            title="Sold after 2 PM local — no same-day ship requirement"
-                          >
-                            Next-day OK
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* SKU — the primary "what to pull" — biggest on the card */}
-                    <div className="mb-3">
-                      <div className="font-mono text-3xl font-bold text-gr-black leading-tight">
-                        {c.item.sku ?? "—"}
-                        {quantity > 1 && (
-                          <span className="ml-3 text-2xl text-gr-green-dark">× {quantity}</span>
-                        )}
-                      </div>
-                      {c.item.name && (
-                        <div className="text-lg text-gr-black/70 mt-1 leading-snug">
-                          {c.item.name}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Footer — customer + ship-to + total */}
-                    <div className="flex items-end justify-between pt-3 border-t border-gr-black/20">
-                      <div className="text-xl text-gr-black">
-                        <div className="font-semibold">{customer}</div>
-                        {(shipCity || o.shipTo?.postalCode) && (
-                          <div className="text-lg text-gr-black/70">
-                            {shipCity}
-                            {o.shipTo?.postalCode && ` · ${o.shipTo.postalCode}`}
-                          </div>
-                        )}
-                      </div>
-                      {o.orderTotal !== undefined && c.itemIndex === 0 && (
-                        <div className="text-right">
-                          <div className="text-xs uppercase tracking-wide text-gr-black/50">Order total</div>
-                          <div className="text-2xl font-bold text-gr-green-dark">
-                            ${Number(o.orderTotal).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* Sidebar — same visual treatment as list-view.tsx for cohesion. */}
+      {/* Sidebar — same treatment as list-view.tsx. */}
       <div className="fixed right-0 top-0 bottom-0 w-20 bg-gr-green-dark flex flex-col justify-between p-2 text-white z-40">
         <div className="space-y-2">
           <div className="flex justify-center pt-1 pb-3">
