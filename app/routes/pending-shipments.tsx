@@ -83,6 +83,24 @@ function ageBadgeClass(hours: number): string {
   return "bg-gr-mint-100 text-gr-black border-gr-black";
 }
 
+/**
+ * "No same-day ship pressure" flag.
+ *
+ * Rule: any sale placed TODAY after 14:00 local (America/New_York — the
+ * warehouse timezone) doesn't have to ship today, so shippers can safely
+ * deprioritize it against the pre-2pm sales. Older sales (any prior day)
+ * always need to ship, no matter what time of day they were placed —
+ * they never get this flag.
+ */
+function isPost2pmToday(iso?: string): boolean {
+  if (!iso) return false;
+  const then = DateTime.fromISO(iso).setZone("America/New_York");
+  if (!then.isValid) return false;
+  const nowLocal = DateTime.now().setZone("America/New_York");
+  const sameDay = then.hasSame(nowLocal, "day");
+  return sameDay && then.hour >= 14;
+}
+
 export default function PendingShipments() {
   const initial = useLoaderData<typeof loader>();
   const [shipments, setShipments] = useState<PendingShipment[]>(initial.shipments ?? []);
@@ -142,7 +160,8 @@ export default function PendingShipments() {
   useInterval(async () => {
     setIsRefreshing(true);
     try {
-      const resp = await fetch(`${apiEndpoint}/api/pending-shipments`);
+      // GOROOSTR_ENDPOINT is already the API base — no /api prefix here.
+      const resp = await fetch(`${apiEndpoint}/pending-shipments`);
       const data = await resp.json();
       setShipments(data.shipments ?? []);
       setLoadError(data.success === false ? data.error ?? "Failed to load" : null);
@@ -251,18 +270,34 @@ export default function PendingShipments() {
                   {sorted.map((o) => {
                     const hrs = hoursOld(o.orderDate);
                     const itemCount = (o.items ?? []).reduce((s, i) => s + (i.quantity ?? 1), 0);
+                    const post2pm = isPost2pmToday(o.orderDate);
                     return (
-                      <tr key={o.orderId ?? o.orderNumber} className="border-b border-gr-black/10 align-top">
+                      <tr
+                        key={o.orderId ?? o.orderNumber}
+                        // Soft blue tint on same-day-post-2pm rows so the shipping team
+                        // can visually skim past "these don't have to ship today."
+                        className={`border-b border-gr-black/10 align-top ${post2pm ? "bg-sky-50" : ""}`}
+                      >
                         <td className="px-3 py-2 font-bold text-gr-black">
                           {o.orderNumber ?? o.orderId}
                         </td>
                         <td className="px-3 py-2">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${ageBadgeClass(hrs)}`}
-                            title={o.orderDate ?? ""}
-                          >
-                            {ageString(o.orderDate)}
-                          </span>
+                          <div className="flex flex-col items-start gap-1">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${ageBadgeClass(hrs)}`}
+                              title={o.orderDate ?? ""}
+                            >
+                              {ageString(o.orderDate)}
+                            </span>
+                            {post2pm && (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-300"
+                                title="Sold after 2 PM local — no same-day ship requirement"
+                              >
+                                Next-day OK
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-2 text-gr-black">
                           {o.shipTo?.name ?? o.customerEmail ?? "—"}
