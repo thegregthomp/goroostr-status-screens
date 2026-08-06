@@ -182,6 +182,46 @@ export default function PendingShipments() {
     });
   }, [shipments]);
 
+  // Flatten to one entry per item so each SKU gets its own card, matching
+  // the per-item card treatment of the other status-screens views. When
+  // an order has multiple items we render N adjacent cards sharing order
+  // #, sold-at, ship-to, and total. Preserves oldest-sold-first ordering.
+  type CardEntry = {
+    key: string;
+    order: PendingShipment;
+    item: NonNullable<PendingShipment["items"]>[number];
+    itemIndex: number;
+    itemCount: number;
+  };
+  const cards: CardEntry[] = useMemo(() => {
+    const out: CardEntry[] = [];
+    for (const o of sorted) {
+      const items = o.items ?? [];
+      if (items.length === 0) {
+        // Order with no items array — still render one placeholder card
+        // so the shipper sees the order sitting there.
+        out.push({
+          key: `${o.orderId ?? o.orderNumber}-none`,
+          order: o,
+          item: { sku: "—", name: "(no items on order)", quantity: 1 },
+          itemIndex: 0,
+          itemCount: 0,
+        });
+        continue;
+      }
+      items.forEach((item, i) => {
+        out.push({
+          key: `${o.orderId ?? o.orderNumber}-${i}-${item.sku ?? "nosku"}`,
+          order: o,
+          item,
+          itemIndex: i,
+          itemCount: items.length,
+        });
+      });
+    }
+    return out;
+  }, [sorted]);
+
   const formatTime = (d: Date) =>
     d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -225,118 +265,128 @@ export default function PendingShipments() {
 
   return (
     <main className="relative min-h-screen bg-gr-beige-light">
-      <div className="p-4 pr-24">
+      <div className="p-6 pr-24">
         <div className="w-full">
-          <div className="flex items-baseline justify-between mb-4">
-            <h1 className="text-2xl font-bold text-gr-black">Pending Shipments</h1>
-            <div className="text-sm text-gr-black/70">
-              {sorted.length} awaiting shipment
+          <div className="flex items-baseline justify-between mb-6">
+            <h1 className="text-4xl font-bold text-gr-black">Pending Shipments</h1>
+            <div className="text-2xl text-gr-black">
+              <span className="font-bold">{cards.length}</span>
+              <span className="text-gr-black/70 ml-2">items · {sorted.length} orders</span>
               {totalValue > 0 && (
-                <span className="ml-3 font-semibold">
-                  ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="ml-4 font-bold text-gr-green-dark">
+                  ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                 </span>
               )}
             </div>
           </div>
 
           {loadError && (
-            <div className="mb-4 border-2 border-red-400 bg-red-50 text-red-800 rounded-lg px-4 py-2 text-sm">
+            <div className="mb-4 border-2 border-red-400 bg-red-50 text-red-800 rounded-lg px-4 py-3 text-xl">
               Couldn't refresh shipments: {loadError}
             </div>
           )}
 
-          {sorted.length === 0 && !loadError && (
-            <div className="border-2 border-gr-black bg-white rounded-2xl p-8 text-center">
-              <div className="text-4xl mb-2">✅</div>
-              <div className="text-lg font-bold text-gr-black">You're all caught up.</div>
-              <div className="text-sm text-gr-black/70 mt-1">No orders currently awaiting shipment.</div>
+          {cards.length === 0 && !loadError && (
+            <div className="border-2 border-gr-black bg-white rounded-2xl p-16 text-center">
+              <div className="text-8xl mb-4">✅</div>
+              <div className="text-4xl font-bold text-gr-black">You're all caught up.</div>
+              <div className="text-xl text-gr-black/70 mt-3">No orders currently awaiting shipment.</div>
             </div>
           )}
 
-          {sorted.length > 0 && (
-            <div className="bg-white rounded-2xl border-2 border-gr-black overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-gr-beige border-b-2 border-gr-black">
-                  <tr className="text-left text-gr-black">
-                    <th className="px-3 py-2 font-bold">Order #</th>
-                    <th className="px-3 py-2 font-bold">Sold</th>
-                    <th className="px-3 py-2 font-bold">Customer</th>
-                    <th className="px-3 py-2 font-bold">Items</th>
-                    <th className="px-3 py-2 font-bold">Ship To</th>
-                    <th className="px-3 py-2 font-bold text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((o) => {
-                    const hrs = hoursOld(o.orderDate);
-                    const itemCount = (o.items ?? []).reduce((s, i) => s + (i.quantity ?? 1), 0);
-                    const post2pm = isPost2pmToday(o.orderDate);
-                    return (
-                      <tr
-                        key={o.orderId ?? o.orderNumber}
-                        // Soft blue tint on same-day-post-2pm rows so the shipping team
-                        // can visually skim past "these don't have to ship today."
-                        className={`border-b border-gr-black/10 align-top ${post2pm ? "bg-sky-50" : ""}`}
-                      >
-                        <td className="px-3 py-2 font-bold text-gr-black">
-                          {o.orderNumber ?? o.orderId}
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-col items-start gap-1">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${ageBadgeClass(hrs)}`}
-                              title={o.orderDate ?? ""}
-                            >
-                              {ageString(o.orderDate)}
-                            </span>
-                            {post2pm && (
-                              <span
-                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-300"
-                                title="Sold after 2 PM local — no same-day ship requirement"
-                              >
-                                Next-day OK
-                              </span>
-                            )}
+          {cards.length > 0 && (
+            // 40" TV target: 2 columns keeps text large enough to read from
+            // across the shop floor. Cards are self-contained with the sold-at
+            // + order # up top, SKU big and centered, model info smaller
+            // beneath, ship-to + total pinned to the bottom.
+            <div className="grid grid-cols-2 gap-4">
+              {cards.map((c) => {
+                const o = c.order;
+                const hrs = hoursOld(o.orderDate);
+                const post2pm = isPost2pmToday(o.orderDate);
+                const shipCity = [o.shipTo?.city, o.shipTo?.state].filter(Boolean).join(", ");
+                const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
+                const quantity = c.item.quantity ?? 1;
+                return (
+                  <div
+                    key={c.key}
+                    // Soft sky tint on the "sold after 2pm today, no ship-today
+                    // pressure" cards, plus its own accent border so it reads
+                    // as visually distinct at a glance from across the room.
+                    className={`rounded-2xl border-2 p-4 ${
+                      post2pm
+                        ? "bg-sky-50 border-sky-400"
+                        : "bg-white border-gr-black"
+                    }`}
+                  >
+                    {/* Header — order # + sold-at + optional multi-item marker */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl font-bold text-gr-black">
+                          #{o.orderNumber ?? o.orderId}
+                        </span>
+                        {c.itemCount > 1 && (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-base font-semibold bg-gr-beige text-gr-black border border-gr-black">
+                            Item {c.itemIndex + 1} of {c.itemCount}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <span
+                          className={`inline-flex items-center px-3 py-1 rounded-full text-lg font-bold border-2 ${ageBadgeClass(hrs)}`}
+                          title={o.orderDate ?? ""}
+                        >
+                          {ageString(o.orderDate)}
+                        </span>
+                        {post2pm && (
+                          <span
+                            className="inline-flex items-center px-3 py-1 rounded-full text-base font-bold bg-sky-100 text-sky-800 border-2 border-sky-400"
+                            title="Sold after 2 PM local — no same-day ship requirement"
+                          >
+                            Next-day OK
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* SKU — the primary "what to pull" — biggest on the card */}
+                    <div className="mb-3">
+                      <div className="font-mono text-3xl font-bold text-gr-black leading-tight">
+                        {c.item.sku ?? "—"}
+                        {quantity > 1 && (
+                          <span className="ml-3 text-2xl text-gr-green-dark">× {quantity}</span>
+                        )}
+                      </div>
+                      {c.item.name && (
+                        <div className="text-lg text-gr-black/70 mt-1 leading-snug">
+                          {c.item.name}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Footer — customer + ship-to + total */}
+                    <div className="flex items-end justify-between pt-3 border-t border-gr-black/20">
+                      <div className="text-xl text-gr-black">
+                        <div className="font-semibold">{customer}</div>
+                        {(shipCity || o.shipTo?.postalCode) && (
+                          <div className="text-lg text-gr-black/70">
+                            {shipCity}
+                            {o.shipTo?.postalCode && ` · ${o.shipTo.postalCode}`}
                           </div>
-                        </td>
-                        <td className="px-3 py-2 text-gr-black">
-                          {o.shipTo?.name ?? o.customerEmail ?? "—"}
-                          {o.shipTo?.company && (
-                            <div className="text-xs text-gr-black/60">{o.shipTo.company}</div>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-gr-black">
-                          {(o.items ?? []).slice(0, 3).map((it, i) => (
-                            <div key={i} className="text-xs">
-                              <span className="font-mono font-semibold">{it.sku ?? "—"}</span>
-                              {(it.quantity ?? 1) > 1 && <span className="ml-1">×{it.quantity}</span>}
-                              {it.name && <span className="text-gr-black/70"> · {it.name}</span>}
-                            </div>
-                          ))}
-                          {(o.items?.length ?? 0) > 3 && (
-                            <div className="text-xs text-gr-black/50">+{(o.items!.length - 3)} more</div>
-                          )}
-                          {itemCount > 1 && (
-                            <div className="text-xs text-gr-black/50 mt-1">{itemCount} units</div>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-gr-black text-xs">
-                          {o.shipTo?.city}
-                          {o.shipTo?.state && `, ${o.shipTo.state}`}
-                          {o.shipTo?.postalCode && (
-                            <div className="text-gr-black/60">{o.shipTo.postalCode}</div>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right font-bold text-gr-green-dark">
-                          {o.orderTotal !== undefined
-                            ? `$${Number(o.orderTotal).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        )}
+                      </div>
+                      {o.orderTotal !== undefined && c.itemIndex === 0 && (
+                        <div className="text-right">
+                          <div className="text-xs uppercase tracking-wide text-gr-black/50">Order total</div>
+                          <div className="text-2xl font-bold text-gr-green-dark">
+                            ${Number(o.orderTotal).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
