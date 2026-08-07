@@ -79,12 +79,6 @@ type PendingShipment = {
     quantity?: number;
     unitPrice?: number;
   }>;
-  inventory_status?: {
-    linked: number;
-    missing_serial: number;
-    imei_expected: number;
-    missing_imei: number;
-  };
 };
 
 /** "3h 12m", "2d 4h" — compact age (no trailing "ago" so it fits tighter). */
@@ -113,10 +107,6 @@ function ageBadgeClass(hours: number): string {
   if (hours >= 48) return "bg-orange-100 text-orange-800 border-orange-300";
   if (hours >= 24) return "bg-yellow-100 text-yellow-800 border-yellow-300";
   return "bg-gr-mint-100 text-gr-black border-gr-black";
-}
-
-function needsBatteryCheck(iso?: string): boolean {
-  return hoursOld(iso) >= 24 * 30;
 }
 
 function isPost2pmToday(iso?: string): boolean {
@@ -320,7 +310,6 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
   const o = c.order;
   const hrs = hoursOld(o.orderDate);
   const post2pm = isPost2pmToday(o.orderDate);
-  const batteryCheck = needsBatteryCheck(o.orderDate);
   // MarketplaceBadge returns a full JSX pill (custom for eBay/BackMarket,
   // colored-text fallback for the rest).
   const svc = serviceBadge(o);
@@ -331,16 +320,11 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
 
   const cardBase = dim
     ? "bg-slate-100 border-slate-300 opacity-80"
-    : batteryCheck
-      ? "bg-amber-100 border-amber-500"
-      : post2pm
-        ? "bg-sky-50 border-sky-400"
-        : "bg-white border-gr-black";
+    : post2pm
+      ? "bg-sky-50 border-sky-400"
+      : "bg-white border-gr-black";
 
-  // Missing-data flags — only apply for pending cards (dim=false).
-  const missingSerial = !dim && (o.inventory_status?.missing_serial ?? 0) > 0;
-  const missingImei = !dim && (o.inventory_status?.missing_imei ?? 0) > 0;
-  const nextDayOk = !dim && post2pm && !batteryCheck;
+  const nextDayOk = !dim && post2pm;
 
   return (
     <div className={`rounded-md p-2 border-2 transition-colors ${cardBase}`}>
@@ -377,31 +361,6 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
             title={`${totalUnits} unit(s) across ${c.itemCount} item type(s) on this order`}
           >
             {totalUnits} ITEMS
-          </span>
-        )}
-        {!dim && batteryCheck && (
-          <span
-            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-white border border-amber-700"
-            title="Sold 30+ days ago — battery check required before shipping"
-          >
-            <span className="text-sm leading-none">🪫</span>
-            <span>BATTERY CHECK</span>
-          </span>
-        )}
-        {missingSerial && (
-          <span
-            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-red-600 text-white border border-red-800"
-            title={`${o.inventory_status?.missing_serial} of ${o.inventory_status?.linked} linked unit(s) missing a serial number`}
-          >
-            NO SERIAL
-          </span>
-        )}
-        {missingImei && (
-          <span
-            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-orange-500 text-white border border-orange-700"
-            title={`${o.inventory_status?.missing_imei} of ${o.inventory_status?.imei_expected} IMEI-expected unit(s) missing an IMEI`}
-          >
-            NO IMEI
           </span>
         )}
         {nextDayOk && (
