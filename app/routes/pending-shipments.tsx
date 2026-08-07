@@ -132,13 +132,22 @@ function isPost2pmToday(iso?: string): boolean {
 function marketplaceBadge(o: PendingShipment): { label: string; className: string } | null {
   const raw = (o.orderSource ?? o.advancedOptions?.source ?? "").toLowerCase();
   if (!raw) return null;
-  if (raw.includes("backmarket")) return { label: "BackMarket", className: "bg-emerald-500 text-white border-emerald-700" };
-  if (raw.includes("ebay")) return { label: "eBay", className: "bg-red-500 text-white border-red-700" };
-  if (raw.includes("amazon")) return { label: "Amazon", className: "bg-orange-500 text-white border-orange-700" };
-  if (raw.includes("swappa")) return { label: "Swappa", className: "bg-fuchsia-500 text-white border-fuchsia-700" };
-  if (raw.includes("gazelle")) return { label: "Gazelle", className: "bg-cyan-500 text-white border-cyan-700" };
-  if (raw.includes("mercari")) return { label: "Mercari", className: "bg-purple-500 text-white border-purple-700" };
-  if (raw.includes("shopify")) return { label: "Shopify", className: "bg-green-600 text-white border-green-800" };
+  // Colors tuned to each marketplace's actual brand identity so the wall
+  // is scannable at TV distance without dedicated logos:
+  //   BackMarket → their neon mint green (#00CC98 → tailwind emerald-400 on black text)
+  //   eBay       → the "e" red (#E53238) as bg with white text
+  //   Amazon     → the primary black wordmark bg + Amazon orange text (#FF9900)
+  //   Swappa     → deep purple (#4E0091 → violet-700)
+  //   Gazelle    → cyan-teal
+  //   Mercari    → warm orange-red (#FF6600 vibe)
+  //   Shopify    → the Shopify green (#95BF47 → lime-500)
+  if (raw.includes("backmarket")) return { label: "BackMarket", className: "bg-emerald-400 text-black border-emerald-700" };
+  if (raw.includes("ebay")) return { label: "eBay", className: "bg-red-600 text-white border-red-800" };
+  if (raw.includes("amazon")) return { label: "amazon", className: "bg-black text-orange-400 border-orange-500" };
+  if (raw.includes("swappa")) return { label: "Swappa", className: "bg-violet-700 text-white border-violet-900" };
+  if (raw.includes("gazelle")) return { label: "Gazelle", className: "bg-teal-500 text-white border-teal-700" };
+  if (raw.includes("mercari")) return { label: "Mercari", className: "bg-orange-600 text-white border-orange-800" };
+  if (raw.includes("shopify")) return { label: "Shopify", className: "bg-lime-500 text-black border-lime-700" };
   if (raw.includes("manual")) return { label: "Manual", className: "bg-slate-500 text-white border-slate-700" };
   // Generic: capitalize first letter of the ShipStation value so custom
   // integrations still get a readable tag.
@@ -314,9 +323,11 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
         </span>
       </div>
 
-      {/* SKU line — primary "what to pull" */}
+      {/* SKU line — primary "what to pull". Bumped up a notch (base vs sm)
+          per the shop-floor readability pass — model info still smaller
+          below so hierarchy stays clean. */}
       <div className="mb-0.5">
-        <div className="font-mono text-sm font-bold text-gray-900 leading-tight truncate">
+        <div className="font-mono text-base font-bold text-gray-900 leading-tight truncate">
           {c.item.sku ?? "—"}
           {quantity > 1 && <span className="ml-1 text-gr-green-dark">× {quantity}</span>}
         </div>
@@ -359,12 +370,21 @@ function ShipmentPanel({
   emptyTitle,
   emptyBody,
   dim = false,
+  gridColsClass = "grid-cols-3",
 }: {
   cards: CardEntry[];
   emptyEmoji: string;
   emptyTitle: string;
   emptyBody: string;
   dim?: boolean;
+  /**
+   * Tailwind grid-cols class. Pending panel (wide) uses grid-cols-3;
+   * the narrower Shipped side-panel uses grid-cols-1 or grid-cols-2 so
+   * each card stays readable at its narrower width. Kept as a class
+   * string (not a numeric prop) so tailwind's JIT sees the literal at
+   * build time and doesn't purge it.
+   */
+  gridColsClass?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dataRef = useRef<HTMLDivElement | null>(null);
@@ -452,7 +472,7 @@ function ShipmentPanel({
           ref={dataRef}
           style={{ transform: styles.y.to((y) => `translate3d(0, ${y}px, 0)`) }}
         >
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className={`grid ${gridColsClass} gap-1.5`}>
             {cards.map((c) => (
               <ShipmentCard key={c.key} c={c} dim={dim} />
             ))}
@@ -604,54 +624,67 @@ export default function PendingShipments() {
       className="relative h-screen overflow-hidden bg-gr-beige-light"
       style={{ colorScheme: "light" }}
     >
-      <div className="h-full flex flex-col p-4 pr-24 gap-3">
+      <div className="h-full flex flex-col p-4 pr-24 gap-2">
         {loadError && (
           <div className="flex-shrink-0 border-2 border-red-400 bg-red-50 text-red-800 rounded-lg px-3 py-2 text-sm">
             Couldn't refresh shipments: {loadError}
           </div>
         )}
 
-        {/* PENDING panel — top 2/3 */}
-        <section className="flex flex-col min-h-0" style={{ flex: "2 1 0" }}>
-          <div className="flex-shrink-0 flex items-baseline justify-between mb-2">
-            <h1 className="text-2xl font-bold text-gr-black">
-              Pending
-              <span className="ml-3 text-lg font-semibold text-gr-black/70">
-                {pendingCards.length} <span className="text-gr-black/50">items · {pendingSorted.length} orders</span>
-              </span>
-            </h1>
-            {totalValue > 0 && (
-              <span className="text-lg font-bold text-gr-green-dark">
-                ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            )}
-          </div>
-          <ShipmentPanel
-            cards={pendingCards}
-            emptyEmoji="✅"
-            emptyTitle="You're all caught up."
-            emptyBody="No orders currently awaiting shipment."
-          />
-        </section>
+        {/* Side-by-side split: Pending 2/3 (left, main) + Shipped Today
+            1/3 (right, muted). Divider between them is a vertical rule
+            (was a horizontal one when this was stacked). */}
+        <div className="flex-1 flex flex-row min-h-0 gap-3">
+          {/* PENDING panel — left 2/3 */}
+          <section className="flex flex-col min-h-0" style={{ flex: "2 1 0" }}>
+            <div className="flex-shrink-0 flex items-baseline justify-between mb-2">
+              <h1 className="text-2xl font-bold text-gr-black">
+                Pending
+                <span className="ml-3 text-lg font-semibold text-gr-black/70">
+                  {pendingCards.length} <span className="text-gr-black/50">items · {pendingSorted.length} orders</span>
+                </span>
+              </h1>
+              {totalValue > 0 && (
+                <span className="text-lg font-bold text-gr-green-dark">
+                  ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              )}
+            </div>
+            <ShipmentPanel
+              cards={pendingCards}
+              emptyEmoji="✅"
+              emptyTitle="You're all caught up."
+              emptyBody="No orders currently awaiting shipment."
+              gridColsClass="grid-cols-3"
+            />
+          </section>
 
-        {/* SHIPPED TODAY panel — bottom 1/3 */}
-        <section className="flex flex-col min-h-0" style={{ flex: "1 1 0" }}>
-          <div className="flex-shrink-0 flex items-baseline justify-between mb-2 border-t-2 border-gr-black/30 pt-2">
-            <h2 className="text-xl font-bold text-gr-black/80">
-              Shipped Today
-              <span className="ml-3 text-base font-semibold text-gr-black/60">
-                {shippedCards.length} <span className="text-gr-black/40">items · {shippedSorted.length} orders</span>
-              </span>
-            </h2>
-          </div>
-          <ShipmentPanel
-            cards={shippedCards}
-            emptyEmoji="📦"
-            emptyTitle="Nothing shipped yet today."
-            emptyBody="Labels generated today land here as they happen."
-            dim
-          />
-        </section>
+          {/* SHIPPED TODAY panel — right 1/3. Vertical divider (border-l)
+              replaces what was the horizontal separator in the stacked
+              layout. Grid drops to 1 column at this width so each card
+              stays readable. */}
+          <section
+            className="flex flex-col min-h-0 border-l-2 border-gr-black/30 pl-3"
+            style={{ flex: "1 1 0" }}
+          >
+            <div className="flex-shrink-0 flex items-baseline justify-between mb-2">
+              <h2 className="text-xl font-bold text-gr-black/80">
+                Shipped Today
+                <span className="ml-3 text-base font-semibold text-gr-black/60">
+                  {shippedCards.length} <span className="text-gr-black/40">items · {shippedSorted.length} orders</span>
+                </span>
+              </h2>
+            </div>
+            <ShipmentPanel
+              cards={shippedCards}
+              emptyEmoji="📦"
+              emptyTitle="Nothing shipped yet today."
+              emptyBody="Labels generated today land here as they happen."
+              dim
+              gridColsClass="grid-cols-1"
+            />
+          </section>
+        </div>
       </div>
 
       {/* Sidebar */}
