@@ -302,15 +302,48 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
         ? "bg-sky-50 border-sky-400"
         : "bg-white border-gr-black";
 
+  // Whether this card has ANY secondary flag — used to conditionally
+  // render the flags row so quiet cards stay quiet (no empty spacer).
+  const missingSerial = !dim && (o.inventory_status?.missing_serial ?? 0) > 0;
+  const missingImei = !dim && (o.inventory_status?.missing_imei ?? 0) > 0;
+  const nextDayOk = !dim && post2pm && !batteryCheck;
+  const hasFlags = !!(svc || c.itemCount > 1 || (!dim && batteryCheck) || missingSerial || missingImei || nextDayOk);
+
   return (
-    <div className={`rounded-md p-1.5 border-2 transition-colors ${cardBase}`}>
-      {/* Top row: order # + marketplace/service badges + age chip */}
-      <div className="flex items-center justify-between gap-1 mb-1">
-        <div className="flex items-center gap-1 min-w-0 flex-wrap">
-          <span className="text-sm font-bold text-gray-800">
-            #{o.orderNumber ?? o.orderId}
-          </span>
+    <div className={`rounded-md p-2 border-2 transition-colors ${cardBase}`}>
+      {/* Hero row — SKU is #1 (biggest thing on the card), marketplace is
+          #2 (colored pill on the right). Shippers said the ShipStation
+          order # wasn't useful, so it's gone. Age chip stays on the right
+          but muted since it isn't the primary signal. */}
+      <div className="flex items-baseline justify-between gap-2 mb-0.5">
+        <div className="font-mono text-xl font-black text-gray-900 leading-none truncate flex-1 min-w-0">
+          {c.item.sku ?? "—"}
+          {quantity > 1 && <span className="ml-2 text-gr-green-dark text-base">× {quantity}</span>}
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           <MarketplaceBadge order={o} />
+          <span
+            className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-semibold border ${ageBadgeClass(hrs)}`}
+            title={o.orderDate ?? ""}
+          >
+            {ageString(o.orderDate)}
+          </span>
+        </div>
+      </div>
+
+      {/* Model name — subordinate to SKU. Truncated so long names don't
+          push the layout around. */}
+      {c.item.name && (
+        <div className="text-xs text-gray-600 mb-1 truncate" title={c.item.name}>
+          {c.item.name}
+        </div>
+      )}
+
+      {/* Flags row — service level + battery / serial / imei / next-day.
+          Only rendered when there's something to show so cards without
+          exceptions stay clean. */}
+      {hasFlags && (
+        <div className="flex items-center gap-1 flex-wrap mb-1">
           {svc && (
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${svc.className}`}>
               {svc.label}
@@ -333,7 +366,7 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
               <span>BATTERY CHECK</span>
             </span>
           )}
-          {!dim && (o.inventory_status?.missing_serial ?? 0) > 0 && (
+          {missingSerial && (
             <span
               className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-red-600 text-white border border-red-800"
               title={`${o.inventory_status?.missing_serial} of ${o.inventory_status?.linked} linked unit(s) missing a serial number`}
@@ -341,7 +374,7 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
               NO SERIAL
             </span>
           )}
-          {!dim && (o.inventory_status?.missing_imei ?? 0) > 0 && (
+          {missingImei && (
             <span
               className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-orange-500 text-white border border-orange-700"
               title={`${o.inventory_status?.missing_imei} of ${o.inventory_status?.imei_expected} IMEI-expected unit(s) missing an IMEI`}
@@ -349,7 +382,7 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
               NO IMEI
             </span>
           )}
-          {!dim && post2pm && !batteryCheck && (
+          {nextDayOk && (
             <span
               className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-300"
               title="Sold after 2 PM local — no same-day ship requirement"
@@ -357,30 +390,6 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
               Next-day OK
             </span>
           )}
-        </div>
-        {/* Age — smaller/muted now that the shippers said it isn't the primary signal. */}
-        <span
-          className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-semibold border flex-shrink-0 ${ageBadgeClass(hrs)}`}
-          title={o.orderDate ?? ""}
-        >
-          {ageString(o.orderDate)}
-        </span>
-      </div>
-
-      {/* SKU line — primary "what to pull". Bumped up a notch (base vs sm)
-          per the shop-floor readability pass — model info still smaller
-          below so hierarchy stays clean. */}
-      <div className="mb-0.5">
-        <div className="font-mono text-base font-bold text-gray-900 leading-tight truncate">
-          {c.item.sku ?? "—"}
-          {quantity > 1 && <span className="ml-1 text-gr-green-dark">× {quantity}</span>}
-        </div>
-      </div>
-
-      {/* Model info under SKU, smaller */}
-      {c.item.name && (
-        <div className="text-xs text-gray-600 mb-1 truncate" title={c.item.name}>
-          {c.item.name}
         </div>
       )}
 
