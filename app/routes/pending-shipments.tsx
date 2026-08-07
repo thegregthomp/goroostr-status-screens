@@ -29,12 +29,17 @@ export function links() {
 
 /**
  * Force light-mode rendering across all viewers. Wall TV browsers respecting
- * OS dark-mode were auto-inverting scrollbars / native chrome against the
- * light-palette cards. Remix v1 meta shape (object, not v2 array).
+ * OS dark-mode were auto-inverting scrollbars / native chrome + card
+ * backgrounds against the light-palette design. Remix v1 meta shape
+ * (object, not v2 array).
+ *
+ * The `color-scheme` meta hints the UA; `theme-color` white keeps the
+ * browser chrome (address bar, tab bar) light too.
  */
 export function meta() {
   return {
     "color-scheme": "light",
+    "theme-color": "#ffffff",
   };
 }
 
@@ -663,6 +668,18 @@ export default function PendingShipments() {
       className="relative h-screen overflow-hidden bg-gr-beige-light"
       style={{ colorScheme: "light" }}
     >
+      {/* Belt-and-suspenders light-mode lock. The route-level meta hints
+          the UA, but Chrome/Safari still darken scrollbars, form chrome,
+          and default backgrounds from prefers-color-scheme unless the
+          html/body themselves carry color-scheme:light. This stamps them
+          route-locally so other screens (if any) can still theme freely. */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        html, body {
+          color-scheme: light !important;
+          background-color: #ffffff !important;
+          color: #111827 !important;
+        }
+      ` }} />
       <div className="h-full flex flex-col p-4 pr-24 gap-2">
         {loadError && (
           <div className="flex-shrink-0 border-2 border-red-400 bg-red-50 text-red-800 rounded-lg px-3 py-2 text-sm">
