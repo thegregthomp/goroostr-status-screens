@@ -412,14 +412,17 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
             Next-day OK
           </span>
         )}
-        {/* Age chip lives with the other secondary info — it stays visible
-            but isn't fighting the SKU for hero real estate. */}
-        <span
-          className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-semibold border ml-auto ${ageBadgeClass(hrs)}`}
-          title={o.orderDate ?? ""}
-        >
-          {ageString(o.orderDate)}
-        </span>
+        {/* Age chip: only on Pending. On Shipped it collapses to "—"
+            (nothing meaningful to say about "how old" a completed
+            shipment is on this wall) so we just skip it there. */}
+        {!dim && (
+          <span
+            className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-semibold border ml-auto ${ageBadgeClass(hrs)}`}
+            title={o.orderDate ?? ""}
+          >
+            {ageString(o.orderDate)}
+          </span>
+        )}
       </div>
 
       {/* Footer: customer + city + STATE token + total. State is now a
