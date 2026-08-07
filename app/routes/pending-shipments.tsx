@@ -422,20 +422,26 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
         </span>
       </div>
 
-      {/* Footer: customer + city + STATE prominent + total */}
+      {/* Footer: customer + city + STATE token + total. State is now a
+          dark pill sitting on the same baseline as the price, so the
+          two "hero" pieces of info on the right (where + how much) line
+          up cleanly as one visual row instead of drifting apart. */}
       <div className="flex items-end justify-between gap-2">
         <div className="text-xs text-gray-600 min-w-0 flex-1">
           <div className="truncate font-medium">{customer}</div>
           {shipCity && <div className="truncate text-gray-500">{shipCity}</div>}
         </div>
-        <div className="flex items-end gap-2 flex-shrink-0">
+        <div className="flex items-baseline gap-2 flex-shrink-0">
           {o.shipTo?.state && (
-            <span className="text-lg font-black text-gr-black leading-none" title={`Ship to ${o.shipTo.state}`}>
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded-md bg-gr-black text-white text-sm font-black tracking-wider"
+              title={`Ship to ${o.shipTo.state}`}
+            >
               {o.shipTo.state}
             </span>
           )}
           {o.orderTotal !== undefined && c.itemIndex === 0 && (
-            <div className="text-base font-bold text-green-600">${Number(o.orderTotal).toFixed(2)}</div>
+            <span className="text-base font-bold text-green-600">${Number(o.orderTotal).toFixed(2)}</span>
           )}
         </div>
       </div>
