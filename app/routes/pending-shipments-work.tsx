@@ -193,14 +193,16 @@ function StateToken({ state }: { state: string }) {
 }
 
 // -----------------------------------------------------------------------
-// Row model — one row per (order, line-item). Multi-item orders produce
-// multiple rows so shippers can act on each SKU independently.
+// Row model — one row per ORDER (not per line-item). A ShipStation
+// order is one label / one shipment, so the "unit of work" for a
+// shipper is the order itself. Multi-item orders stack their SKUs in
+// the SKU cell and the picker collects one inventory pick per SKU.
+
+type OrderItem = NonNullable<PendingShipment["items"]>[number];
 
 type WorkRow = {
   order: PendingShipment;
-  item: NonNullable<PendingShipment["items"]>[number];
-  itemIndex: number;
-  itemCount: number;
+  items: OrderItem[];
 };
 
 type InventoryMatch = {
@@ -211,16 +213,10 @@ type InventoryMatch = {
   created_at: string | null;
 };
 
-function flattenToRows(shipments: PendingShipment[]): WorkRow[] {
-  const rows: WorkRow[] = [];
-  for (const o of shipments) {
-    const items = o.items ?? [];
-    if (!items.length) continue;
-    items.forEach((item, i) => {
-      rows.push({ order: o, item, itemIndex: i, itemCount: items.length });
-    });
-  }
-  return rows;
+function toRows(shipments: PendingShipment[]): WorkRow[] {
+  return shipments
+    .filter((o) => (o.items ?? []).length > 0)
+    .map((o) => ({ order: o, items: o.items ?? [] }));
 }
 
 // -----------------------------------------------------------------------
@@ -297,86 +293,32 @@ export default function PendingShipmentsWork() {
     });
   }, [shipments]);
 
-  const rows = useMemo(() => flattenToRows(sorted), [sorted]);
+  const rows = useMemo(() => toRows(sorted), [sorted]);
 
-  // Search filter: matches SKU, order#, customer name, or city.
+  // Search filter: matches any SKU on the order, order#, customer name,
+  // or city.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) => {
-      const sku = (r.item.sku ?? "").toLowerCase();
       const orderNo = (r.order.orderNumber ?? "").toLowerCase();
       const name = (r.order.shipTo?.name ?? r.order.customerEmail ?? "").toLowerCase();
       const city = (r.order.shipTo?.city ?? "").toLowerCase();
-      return sku.includes(q) || orderNo.includes(q) || name.includes(q) || city.includes(q);
+      const anySku = r.items.some((it) => (it.sku ?? "").toLowerCase().includes(q));
+      return anySku || orderNo.includes(q) || name.includes(q) || city.includes(q);
     });
   }, [rows, query]);
 
-  // Inventory picker state — one active row at a time (only one popover
-  // open at once). `pickerRow` is the WorkRow whose Print button was
-  // clicked; `pickerMatches` is the live list of inventory options for
-  // that row's SKU, filtered further by `pickerQuery` (ID substring).
+  // Print flow state — three stages:
+  //   1. picker    — one section per SKU on the order; each collects
+  //                  its own inventory pick
+  //   2. confirm   — one weight input + all picks summarized
+  //   3. result    — success card w/ tracking# + fallback PDF link
+  // Kept in the parent so ItemPickerSection sub-components stay
+  // stateless-outside-their-own-fetch.
   const [pickerRow, setPickerRow] = useState<WorkRow | null>(null);
-  const [pickerMatches, setPickerMatches] = useState<InventoryMatch[]>([]);
-  const [pickerQuery, setPickerQuery] = useState("");
-  const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerError, setPickerError] = useState<string | null>(null);
-
-  // Fetch inventory matches whenever the picker opens or the search
-  // query changes. Debounced lightly so typing doesn't spam the API.
-  useEffect(() => {
-    if (!pickerRow) return;
-    const sku = pickerRow.item.sku;
-    if (!sku) {
-      setPickerMatches([]);
-      setPickerError("This row has no SKU — can't pick an inventory unit.");
-      return;
-    }
-    const controller = new AbortController();
-    const t = setTimeout(async () => {
-      setPickerLoading(true);
-      setPickerError(null);
-      try {
-        const url = `${apiEndpoint}/inventory/search?sku=${encodeURIComponent(sku)}&q=${encodeURIComponent(pickerQuery)}`;
-        const resp = await fetch(url, { signal: controller.signal });
-        const data = await resp.json();
-        if (data.success === false) throw new Error(data.error ?? "Search failed");
-        setPickerMatches(data.results ?? []);
-      } catch (e) {
-        if ((e as Error).name === "AbortError") return;
-        setPickerError((e as Error).message ?? "Search failed");
-      } finally {
-        setPickerLoading(false);
-      }
-    }, 200);
-    return () => {
-      controller.abort();
-      clearTimeout(t);
-    };
-  }, [pickerRow, pickerQuery, apiEndpoint]);
-
-  const openPicker = (row: WorkRow) => {
-    setPickerRow(row);
-    setPickerQuery("");
-    setPickerMatches([]);
-    setPickerError(null);
-  };
-  const closePicker = () => {
-    setPickerRow(null);
-    setPickerQuery("");
-    setPickerMatches([]);
-    setPendingPick(null);
-    setPrintError(null);
-  };
-
-  // Print flow state:
-  //   pick inventory → confirm modal (with weight override) → fire.
-  // ShipStation Connect on the paired machine has AutoPrint on, so
-  // creating the label via API triggers Connect to physically print
-  // — no browser tab needed. We show a success card with tracking# +
-  // shipmentCost + a fallback "Download PDF" link (in case Connect
-  // hiccups and the physical print didn't happen).
-  const [pendingPick, setPendingPick] = useState<InventoryMatch | null>(null);
+  const [picks, setPicks] = useState<Record<number, InventoryMatch>>({});
+  const [confirmMode, setConfirmMode] = useState(false);
   const [weightOz, setWeightOz] = useState<string>("");
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
@@ -388,25 +330,56 @@ export default function PendingShipmentsWork() {
     labelDataUrl: string | null;
   } | null>(null);
 
-  const confirmPick = (inv: InventoryMatch) => {
-    setPendingPick(inv);
+  const openPicker = (row: WorkRow) => {
+    setPickerRow(row);
+    setPicks({});
+    setConfirmMode(false);
     setPrintError(null);
     // Default the weight input to whatever ShipStation has on the
     // order (usually populated by automation rules on import). Blank
     // string if unknown — shipper must fill it in before we submit.
-    const w = pickerRow?.order.weight?.value;
+    const w = row.order.weight?.value;
     setWeightOz(w && w > 0 ? String(w) : "");
   };
 
-  const cancelConfirm = () => {
-    setPendingPick(null);
+  const closePicker = () => {
+    setPickerRow(null);
+    setPicks({});
+    setConfirmMode(false);
     setPrintError(null);
     setWeightOz("");
   };
 
+  const setPickForItem = (itemIndex: number, inv: InventoryMatch) =>
+    setPicks((prev) => ({ ...prev, [itemIndex]: inv }));
+  const unsetPickForItem = (itemIndex: number) =>
+    setPicks((prev) => {
+      const next = { ...prev };
+      delete next[itemIndex];
+      return next;
+    });
+
+  const allPicked = pickerRow
+    ? pickerRow.items.every((_, i) => picks[i] !== undefined)
+    : false;
+
+  const goToConfirm = () => {
+    if (!allPicked) return;
+    setConfirmMode(true);
+    setPrintError(null);
+  };
+  const backToPick = () => {
+    setConfirmMode(false);
+    setPrintError(null);
+  };
+
   const firePrint = async () => {
-    if (!pickerRow || !pendingPick) return;
-    // Weight sanity check — refuse to fire on missing/nonsense values.
+    if (!pickerRow) return;
+    const inventoryIds = pickerRow.items.map((_, i) => picks[i]?.id).filter(Boolean) as number[];
+    if (inventoryIds.length !== pickerRow.items.length) {
+      setPrintError("One or more items don't have an inventory pick.");
+      return;
+    }
     const w = Number(weightOz);
     if (!weightOz || Number.isNaN(w) || w <= 0) {
       setPrintError("Enter a weight in ounces before printing.");
@@ -420,7 +393,7 @@ export default function PendingShipmentsWork() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId: pickerRow.order.orderId,
-          inventoryId: pendingPick.id,
+          inventoryIds,
           weightOz: w,
         }),
       });
@@ -428,8 +401,6 @@ export default function PendingShipmentsWork() {
       if (!resp.ok || data.success === false) {
         throw new Error(data.error ?? `HTTP ${resp.status}`);
       }
-      // Convert base64 PDF to a blob URL for the fallback download
-      // button. Connect should have already printed via AutoPrint.
       let labelDataUrl: string | null = null;
       if (data.labelData) {
         const binary = atob(data.labelData);
@@ -445,8 +416,8 @@ export default function PendingShipmentsWork() {
         serviceCode: data.serviceCode ?? null,
         labelDataUrl,
       });
-      // Drop the pending row from the list optimistically (the 60s
-      // poll would catch up but this feels responsive).
+      // Drop the pending row from the list optimistically (60s poll
+      // would catch up anyway, but this feels responsive).
       setShipments((prev) => prev.filter((s) => s.orderId !== pickerRow.order.orderId));
     } catch (e) {
       setPrintError((e as Error).message ?? "Print failed");
@@ -568,14 +539,14 @@ export default function PendingShipmentsWork() {
                   const hrs = hoursOld(o.orderDate);
                   const svc = serviceBadge(o);
                   const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
-                  const qty = r.item.quantity ?? 1;
-                  const key = `${o.orderId ?? o.orderNumber}-${r.itemIndex}`;
+                  const multi = r.items.length > 1;
+                  const key = `${o.orderId ?? o.orderNumber}`;
                   return (
                     <tr
                       key={key}
                       className={`border-t border-slate-200 hover:bg-slate-50 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/50"}`}
                     >
-                      <td className="px-2 py-2 whitespace-nowrap">
+                      <td className="px-2 py-2 whitespace-nowrap align-top">
                         <span
                           className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${ageBadgeClass(hrs)}`}
                           title={o.orderDate ?? ""}
@@ -583,47 +554,56 @@ export default function PendingShipmentsWork() {
                           {ageString(o.orderDate)}
                         </span>
                       </td>
-                      <td className="px-2 py-2 font-mono font-bold text-gray-900">
-                        {r.item.sku ?? "—"}
-                        {qty > 1 && <span className="ml-1 text-gr-green-dark text-xs">× {qty}</span>}
-                        {r.itemCount > 1 && (
-                          <span className="ml-2 text-[10px] font-semibold text-purple-700" title="Multi-item order">
-                            [{r.itemIndex + 1}/{r.itemCount}]
-                          </span>
+                      <td className="px-2 py-2 font-mono font-bold text-gray-900 align-top">
+                        {multi && (
+                          <div className="text-[10px] font-sans font-bold text-purple-700 uppercase mb-0.5">
+                            {r.items.length}-item order
+                          </div>
                         )}
+                        {r.items.map((it, i) => {
+                          const qty = it.quantity ?? 1;
+                          return (
+                            <div key={i} className={i > 0 ? "mt-0.5" : ""}>
+                              {it.sku ?? "—"}
+                              {qty > 1 && <span className="ml-1 text-gr-green-dark text-xs">× {qty}</span>}
+                            </div>
+                          );
+                        })}
                       </td>
-                      <td className="px-2 py-2 text-gray-700 max-w-xs truncate" title={r.item.name ?? ""}>
-                        {r.item.name ?? "—"}
+                      <td className="px-2 py-2 text-gray-700 max-w-xs align-top">
+                        {r.items.map((it, i) => (
+                          <div key={i} className={`truncate ${i > 0 ? "mt-0.5" : ""}`} title={it.name ?? ""}>
+                            {it.name ?? "—"}
+                          </div>
+                        ))}
                       </td>
-                      <td className="px-2 py-2 whitespace-nowrap">
+                      <td className="px-2 py-2 whitespace-nowrap align-top">
                         <MarketplaceBadge order={o} />
                       </td>
-                      <td className="px-2 py-2 whitespace-nowrap">
+                      <td className="px-2 py-2 whitespace-nowrap align-top">
                         {svc && (
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${svc.className}`}>
                             {svc.label}
                           </span>
                         )}
                       </td>
-                      <td className="px-2 py-2 text-gray-800 font-medium whitespace-nowrap max-w-[14ch] truncate" title={customer}>
+                      <td className="px-2 py-2 text-gray-800 font-medium whitespace-nowrap max-w-[14ch] truncate align-top" title={customer}>
                         {customer}
                       </td>
-                      <td className="px-2 py-2 text-gray-600 whitespace-nowrap max-w-[14ch] truncate" title={o.shipTo?.city ?? ""}>
+                      <td className="px-2 py-2 text-gray-600 whitespace-nowrap max-w-[14ch] truncate align-top" title={o.shipTo?.city ?? ""}>
                         {o.shipTo?.city ?? "—"}
                       </td>
-                      <td className="px-2 py-2 whitespace-nowrap">
+                      <td className="px-2 py-2 whitespace-nowrap align-top">
                         {o.shipTo?.state && <StateToken state={o.shipTo.state} />}
                       </td>
-                      <td className="px-2 py-2 text-right font-bold text-green-700 whitespace-nowrap">
-                        {o.orderTotal !== undefined && r.itemIndex === 0
-                          ? `$${Number(o.orderTotal).toFixed(2)}`
-                          : ""}
+                      <td className="px-2 py-2 text-right font-bold text-green-700 whitespace-nowrap align-top">
+                        {o.orderTotal !== undefined ? `$${Number(o.orderTotal).toFixed(2)}` : ""}
                       </td>
-                      <td className="px-2 py-2 text-center">
+                      <td className="px-2 py-2 text-center align-top">
                         <button
                           onClick={() => openPicker(r)}
                           className="inline-flex items-center px-3 py-1 rounded-md bg-gr-green-dark text-white text-xs font-bold hover:opacity-90"
-                          title="Pick inventory unit, then print shipping label"
+                          title="Pick inventory unit(s), then print shipping label"
                         >
                           Print
                         </button>
@@ -637,24 +617,34 @@ export default function PendingShipmentsWork() {
         </div>
       </div>
 
-      {/* Two-step Print flow.
-          Step 1: pick inventory unit (searchable, SKU-scoped).
-          Step 2: confirm — bills postage on click. */}
+      {/* Three-stage Print flow.
+          Stage 1 (picker):  one section per SKU in the order, each with
+                             its own SKU-scoped search.
+          Stage 2 (confirm): all picks + weight; billing warning; fire.
+          Stage 3 (result):  success card w/ tracking + fallback PDF. */}
       {pickerRow && (
         <div
-          className="fixed inset-0 bg-black/40 flex items-start justify-center pt-24 z-50"
+          className="fixed inset-0 bg-black/40 flex items-start justify-center pt-16 pb-16 z-50 overflow-y-auto"
           onClick={printing ? undefined : closePicker}
         >
           <div
-            className="bg-white rounded-lg shadow-2xl border-2 border-gr-black w-full max-w-lg mx-4"
+            className="bg-white rounded-lg shadow-2xl border-2 border-gr-black w-full max-w-xl mx-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-baseline justify-between px-4 py-3 border-b border-slate-200">
               <div>
                 <div className="text-sm font-bold text-gr-black">
-                  {pendingPick ? "Confirm & print" : "Pick inventory unit"}
+                  {printResult
+                    ? "Label created"
+                    : confirmMode
+                      ? "Confirm & print"
+                      : pickerRow.items.length > 1
+                        ? `Pick inventory (${Object.keys(picks).length}/${pickerRow.items.length})`
+                        : "Pick inventory"}
                 </div>
-                <div className="text-xs text-gray-500 font-mono">{pickerRow.item.sku ?? "—"}</div>
+                <div className="text-xs text-gray-500 font-mono">
+                  Order #{pickerRow.order.orderNumber ?? pickerRow.order.orderId}
+                </div>
               </div>
               <button
                 onClick={closePicker}
@@ -666,7 +656,7 @@ export default function PendingShipmentsWork() {
               </button>
             </div>
 
-            {/* STEP 3: Success card — shown after a successful print. */}
+            {/* STAGE 3: Success card. */}
             {printResult ? (
               <div className="px-4 py-4">
                 <div className="border border-emerald-300 bg-emerald-50 rounded px-3 py-3 mb-3">
@@ -711,27 +701,35 @@ export default function PendingShipmentsWork() {
                   </button>
                 </div>
               </div>
-            ) : pendingPick ? (
-              /* STEP 2: Confirmation */
+            ) : confirmMode ? (
+              /* STAGE 2: Confirmation */
               <div className="px-4 py-4">
                 <div className="mb-3">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider">Order</div>
-                  <div className="font-mono text-sm text-gr-black">
-                    #{pickerRow.order.orderNumber ?? pickerRow.order.orderId}
-                    <span className="text-gray-500 ml-2">
-                      → {pickerRow.order.shipTo?.name ?? "—"}, {pickerRow.order.shipTo?.state ?? "—"}
-                    </span>
+                  <div className="text-xs text-gray-500 uppercase tracking-wider">Ship to</div>
+                  <div className="text-sm text-gr-black">
+                    {pickerRow.order.shipTo?.name ?? "—"}, {pickerRow.order.shipTo?.city ?? "—"},{" "}
+                    <span className="font-bold">{pickerRow.order.shipTo?.state ?? "—"}</span>
                   </div>
                 </div>
                 <div className="mb-3">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider">Inventory unit</div>
-                  <div className="font-mono text-sm text-gr-black">
-                    #{pendingPick.id}
-                    <span className="text-gray-500 ml-2">
-                      · {pendingPick.serial_number ?? "no serial"}
-                    </span>
+                  <div className="text-xs text-gray-500 uppercase tracking-wider">
+                    Inventory unit{pickerRow.items.length > 1 ? "s" : ""}
                   </div>
-                  <div className="text-xs text-gray-600 mt-0.5">{pendingPick.description ?? "—"}</div>
+                  <ul className="text-sm">
+                    {pickerRow.items.map((it, i) => {
+                      const inv = picks[i];
+                      if (!inv) return null;
+                      return (
+                        <li key={i} className="border-b border-slate-100 last:border-b-0 py-1">
+                          <div className="font-mono text-gr-black">
+                            #{inv.id}{" "}
+                            <span className="text-gray-500">· {inv.serial_number ?? "no serial"}</span>
+                          </div>
+                          <div className="text-xs text-gray-500 font-mono">{it.sku ?? "—"}</div>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
                 <div className="mb-3">
                   <div className="text-xs text-gray-500 uppercase tracking-wider">Service</div>
@@ -744,7 +742,7 @@ export default function PendingShipmentsWork() {
                   <label className="text-xs text-gray-500 uppercase tracking-wider block mb-1">
                     Weight (oz)
                     <span className="ml-2 normal-case tracking-normal text-[10px] text-gray-400">
-                      pre-filled from order — verify or override
+                      pre-filled from order — verify or override (whole-box weight for multi-item)
                     </span>
                   </label>
                   <input
@@ -773,7 +771,7 @@ export default function PendingShipmentsWork() {
                 )}
                 <div className="flex items-center justify-end gap-2">
                   <button
-                    onClick={cancelConfirm}
+                    onClick={backToPick}
                     disabled={printing}
                     className="px-3 py-2 rounded border border-gray-300 text-gr-black text-sm hover:bg-slate-50 disabled:opacity-40"
                   >
@@ -789,65 +787,185 @@ export default function PendingShipmentsWork() {
                 </div>
               </div>
             ) : (
-              /* STEP 1: Picker */
+              /* STAGE 1: Picker — one section per line item in the order. */
               <>
-                <div className="px-4 py-3 border-b border-slate-200">
-                  <input
-                    type="search"
-                    value={pickerQuery}
-                    onChange={(e) => setPickerQuery(e.target.value)}
-                    placeholder="Filter by inventory ID…"
-                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
-                    autoFocus
-                  />
-                </div>
-                <div className="max-h-80 overflow-y-auto">
-                  {pickerLoading && (
-                    <div className="text-center text-gray-500 text-sm py-6">Searching…</div>
-                  )}
-                  {pickerError && (
-                    <div className="text-red-700 bg-red-50 border border-red-300 rounded m-3 px-3 py-2 text-sm">
-                      {pickerError}
-                    </div>
-                  )}
-                  {!pickerLoading && !pickerError && pickerMatches.length === 0 && (
-                    <div className="text-center text-gray-500 text-sm py-6">
-                      No in-stock units for this SKU.
-                    </div>
-                  )}
-                  {!pickerLoading && pickerMatches.length > 0 && (
-                    <ul>
-                      {pickerMatches.map((inv) => (
-                        <li key={inv.id}>
-                          <button
-                            onClick={() => confirmPick(inv)}
-                            className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
-                          >
-                            <div className="flex items-baseline justify-between gap-3">
-                              <div className="font-mono font-bold text-gr-black">#{inv.id}</div>
-                              <div className="text-xs text-gray-500 font-mono truncate max-w-[60%]">
-                                {inv.serial_number ?? "no serial"}
-                              </div>
-                            </div>
-                            <div className="text-xs text-gray-600 truncate">
-                              {inv.description ?? "—"}
-                            </div>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                {pickerMatches.length > 0 && (
-                  <div className="text-xs text-gray-500 px-4 py-2 border-t border-slate-200">
-                    {pickerMatches.length} match{pickerMatches.length === 1 ? "" : "es"} · oldest listed first
+                {pickerRow.items.length > 1 && (
+                  <div className="px-4 py-2 border-b border-slate-200 bg-purple-50 text-xs text-purple-900">
+                    <strong>{pickerRow.items.length}-item order.</strong> Pick one inventory unit
+                    for each SKU below. All go on the same label.
                   </div>
                 )}
+                <div className="max-h-[60vh] overflow-y-auto">
+                  {pickerRow.items.map((item, i) => (
+                    <ItemPickerSection
+                      key={`${pickerRow.order.orderId}-${i}`}
+                      apiEndpoint={apiEndpoint}
+                      item={item}
+                      picked={picks[i]}
+                      onPick={(inv) => setPickForItem(i, inv)}
+                      onUnpick={() => unsetPickForItem(i)}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-2 px-4 py-3 border-t border-slate-200">
+                  <div className="text-xs text-gray-500">
+                    {Object.keys(picks).length}/{pickerRow.items.length} picked
+                  </div>
+                  <button
+                    onClick={goToConfirm}
+                    disabled={!allPicked}
+                    className="px-3 py-2 rounded bg-gr-green-dark text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
+                  >
+                    Continue →
+                  </button>
+                </div>
               </>
             )}
           </div>
         </div>
       )}
     </main>
+  );
+}
+
+// -----------------------------------------------------------------------
+// One section of the picker — dedicated to a single line item on the
+// order. Owns its own fetch + query state so multiple sections coexist
+// cleanly on a multi-item order without interfering. Parent tracks only
+// the picked InventoryMatch via onPick / onUnpick callbacks.
+
+function ItemPickerSection({
+  apiEndpoint,
+  item,
+  picked,
+  onPick,
+  onUnpick,
+}: {
+  apiEndpoint: string | undefined;
+  item: OrderItem;
+  picked: InventoryMatch | undefined;
+  onPick: (inv: InventoryMatch) => void;
+  onUnpick: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<InventoryMatch[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // No fetch needed while this SKU already has a selection — the
+    // shipper has committed a pick and the search list is hidden.
+    if (picked) return;
+    const sku = item.sku;
+    if (!sku) {
+      setMatches([]);
+      setError("This item has no SKU — can't pick an inventory unit.");
+      return;
+    }
+    const controller = new AbortController();
+    const t = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const url = `${apiEndpoint}/inventory/search?sku=${encodeURIComponent(sku)}&q=${encodeURIComponent(query)}`;
+        const resp = await fetch(url, { signal: controller.signal });
+        const data = await resp.json();
+        if (data.success === false) throw new Error(data.error ?? "Search failed");
+        setMatches(data.results ?? []);
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return;
+        setError((e as Error).message ?? "Search failed");
+      } finally {
+        setLoading(false);
+      }
+    }, 200);
+    return () => {
+      controller.abort();
+      clearTimeout(t);
+    };
+  }, [apiEndpoint, item.sku, query, picked]);
+
+  const qty = item.quantity ?? 1;
+
+  return (
+    <div className="border-b border-slate-200 last:border-b-0">
+      <div className="px-4 py-2 bg-slate-50">
+        <div className="font-mono font-bold text-gr-black text-sm">
+          {item.sku ?? "—"}
+          {qty > 1 && <span className="ml-2 text-gr-green-dark text-xs">× {qty}</span>}
+        </div>
+        {item.name && (
+          <div className="text-xs text-gray-600 truncate" title={item.name}>{item.name}</div>
+        )}
+      </div>
+
+      {picked ? (
+        <div className="px-4 py-3 flex items-center justify-between gap-3 bg-emerald-50/50">
+          <div>
+            <div className="text-xs text-emerald-800 uppercase tracking-wider mb-0.5">Picked</div>
+            <div className="font-mono text-sm text-gr-black">
+              #{picked.id} <span className="text-gray-500">· {picked.serial_number ?? "no serial"}</span>
+            </div>
+          </div>
+          <button
+            onClick={onUnpick}
+            className="text-xs text-gray-600 underline hover:text-gr-black"
+          >
+            Change
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="px-4 py-2">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter by inventory ID…"
+              className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {loading && (
+              <div className="text-center text-gray-500 text-sm py-4">Searching…</div>
+            )}
+            {error && (
+              <div className="text-red-700 bg-red-50 border border-red-300 rounded m-3 px-3 py-2 text-sm">
+                {error}
+              </div>
+            )}
+            {!loading && !error && matches.length === 0 && (
+              <div className="text-center text-gray-500 text-sm py-4">
+                No in-stock units for this SKU.
+              </div>
+            )}
+            {!loading && matches.length > 0 && (
+              <ul>
+                {matches.map((inv) => (
+                  <li key={inv.id}>
+                    <button
+                      onClick={() => onPick(inv)}
+                      className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
+                    >
+                      <div className="flex items-baseline justify-between gap-3">
+                        <div className="font-mono font-bold text-gr-black text-sm">#{inv.id}</div>
+                        <div className="text-xs text-gray-500 font-mono truncate max-w-[60%]">
+                          {inv.serial_number ?? "no serial"}
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {matches.length > 0 && (
+            <div className="text-xs text-gray-500 px-4 py-1">
+              {matches.length} · oldest first
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
