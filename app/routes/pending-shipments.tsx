@@ -431,7 +431,7 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
           up cleanly as one visual row instead of drifting apart. */}
       <div className="flex items-end justify-between gap-2">
         <div className="text-xs text-gray-600 min-w-0 flex-1">
-          <div className="truncate font-medium">{customer}</div>
+          <div className="truncate font-bold text-gray-900">{customer}</div>
           {shipCity && <div className="truncate text-gray-500">{shipCity}</div>}
         </div>
         <div className="flex items-baseline gap-2 flex-shrink-0">
