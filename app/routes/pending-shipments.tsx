@@ -348,9 +348,9 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
           "16-2023-MBP-SLV-M2-24GB-512GB" don't truncate. Wrap breaks on
           any character so nothing gets clipped. Marketplace + age moved
           to the flags row below. */}
-      <div className="font-mono text-xl font-black text-gray-900 leading-tight break-all mb-0.5">
+      <div className="font-mono text-lg font-black text-gray-900 leading-tight break-all mb-0.5">
         {c.item.sku ?? "—"}
-        {quantity > 1 && <span className="ml-2 text-gr-green-dark text-base">× {quantity}</span>}
+        {quantity > 1 && <span className="ml-2 text-gr-green-dark text-sm">× {quantity}</span>}
       </div>
 
       {/* Model name — subordinate to SKU. Truncated so long names don't
@@ -769,13 +769,18 @@ export default function PendingShipments() {
                 </span>
               </h2>
             </div>
+            {/* Shipped panel is 1/3 of the screen wide. At grid-cols-1 a
+                single shipped card ballooned to fill the whole third —
+                much wider than a pending card. grid-cols-2 keeps each
+                card ~half the panel so a lone card still looks like a
+                card, not a poster. */}
             <ShipmentPanel
               cards={shippedCards}
               emptyEmoji="📦"
               emptyTitle="Nothing shipped yet today."
               emptyBody="Labels generated today land here as they happen."
               dim
-              gridColsClass="grid-cols-1"
+              gridColsClass="grid-cols-2"
             />
           </section>
         </div>
