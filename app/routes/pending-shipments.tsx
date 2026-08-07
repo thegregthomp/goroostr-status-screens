@@ -432,14 +432,23 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
           {shipCity && <div className="truncate text-gray-500">{shipCity}</div>}
         </div>
         <div className="flex items-baseline gap-2 flex-shrink-0">
-          {o.shipTo?.state && (
-            <span
-              className="inline-flex items-center px-2 py-0.5 rounded-md bg-gr-black text-white text-sm font-black tracking-wider"
-              title={`Ship to ${o.shipTo.state}`}
-            >
-              {o.shipTo.state}
-            </span>
-          )}
+          {o.shipTo?.state && (() => {
+            // HI + AK: red token so shippers notice (out-of-CONUS routing,
+            // pricier + easier to grab the wrong label).
+            const st = o.shipTo.state.toUpperCase();
+            const outOfConus = st === "HI" || st === "AK";
+            const cls = outOfConus
+              ? "bg-red-600 text-white"
+              : "bg-gr-black text-white";
+            return (
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded-md text-sm font-black tracking-wider ${cls}`}
+                title={outOfConus ? `Ship to ${st} — out-of-CONUS, check rate` : `Ship to ${st}`}
+              >
+                {o.shipTo.state}
+              </span>
+            );
+          })()}
           {o.orderTotal !== undefined && c.itemIndex === 0 && (
             <span className="text-base font-bold text-green-600">${Number(o.orderTotal).toFixed(2)}</span>
           )}
