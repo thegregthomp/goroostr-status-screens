@@ -730,7 +730,7 @@ export default function PendingShipments() {
             (was a horizontal one when this was stacked). */}
         <div className="flex-1 flex flex-row min-h-0 gap-3">
           {/* PENDING panel — left 2/3 */}
-          <section className="flex flex-col min-h-0" style={{ flex: "2 1 0" }}>
+          <section className="flex flex-col min-h-0" style={{ flex: "3 1 0" }}>
             <div className="flex-shrink-0 flex items-baseline justify-between mb-2">
               <h1 className="text-2xl font-bold text-gr-black">
                 Pending
@@ -769,18 +769,17 @@ export default function PendingShipments() {
                 </span>
               </h2>
             </div>
-            {/* Shipped panel is 1/3 of the screen wide. At grid-cols-1 a
-                single shipped card ballooned to fill the whole third —
-                much wider than a pending card. grid-cols-2 keeps each
-                card ~half the panel so a lone card still looks like a
-                card, not a poster. */}
+            {/* Split is 3:1. At 1/4 viewport width with grid-cols-1, each
+                shipped card ends up ~25% wide — matching the pending
+                cards on the left (3/4 ÷ 3 cols = 25% each). All cards
+                across the wall are now the same size. */}
             <ShipmentPanel
               cards={shippedCards}
               emptyEmoji="📦"
               emptyTitle="Nothing shipped yet today."
               emptyBody="Labels generated today land here as they happen."
               dim
-              gridColsClass="grid-cols-2"
+              gridColsClass="grid-cols-1"
             />
           </section>
         </div>
