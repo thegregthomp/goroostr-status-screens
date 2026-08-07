@@ -365,20 +365,77 @@ export default function PendingShipmentsWork() {
     setPickerRow(null);
     setPickerQuery("");
     setPickerMatches([]);
+    setPendingPick(null);
+    setPrintError(null);
   };
 
+  // Print flow state: after picking an inventory unit we go into a
+  // two-step confirm to avoid a fat-fingered postage charge. Once
+  // confirmed, we call the API, which fires ShipStation
+  // createlabelfororder (BILLS POSTAGE) and returns base64 PDF.
+  const [pendingPick, setPendingPick] = useState<InventoryMatch | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+
   const confirmPick = (inv: InventoryMatch) => {
-    // Print stub — real flow: PUT internalNotes = inv.id onto the order,
-    // then POST createlabelfororder, forward returned label PDF to the
-    // printer-api. Wired up in follow-up commit.
-    const orderNo = pickerRow?.order.orderNumber ?? pickerRow?.order.orderId;
-    // eslint-disable-next-line no-alert
-    alert(
-      `Print stub — order ${orderNo}, SKU ${pickerRow?.item.sku ?? "—"}, ` +
-      `inventory #${inv.id} (${inv.serial_number ?? "no serial"}).\n\n` +
-      `Next: PUT internalNotes="${inv.id}" → ShipStation createlabel → printer-api.`
-    );
-    closePicker();
+    // Stage the pick — user must click "Confirm & Print" to actually
+    // fire the label call.
+    setPendingPick(inv);
+    setPrintError(null);
+  };
+
+  const cancelConfirm = () => {
+    setPendingPick(null);
+    setPrintError(null);
+  };
+
+  const firePrint = async () => {
+    if (!pickerRow || !pendingPick) return;
+    setPrinting(true);
+    setPrintError(null);
+    try {
+      const resp = await fetch(`${apiEndpoint}/shipping/print-label`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: pickerRow.order.orderId,
+          inventoryId: pendingPick.id,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.success === false) {
+        throw new Error(data.error ?? `HTTP ${resp.status}`);
+      }
+      // Turn the base64 PDF into a blob URL and open it in a new tab.
+      // Browsers auto-render PDFs — the shipper hits Cmd+P once and
+      // it goes to whatever printer they've set as default (typically
+      // the same physical shipping-label printer ShipStation Connect
+      // already talks to on that machine).
+      if (data.labelData) {
+        const binary = atob(data.labelData);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        const w = window.open(url, "_blank");
+        // Trigger the browser print dialog once the PDF is loaded so
+        // shippers don't have to Cmd+P themselves in most cases.
+        if (w) {
+          w.addEventListener("load", () => {
+            try { w.print(); } catch { /* pop-up blocker / cross-origin */ }
+          });
+        }
+      }
+      // Drop the pending row from the list optimistically (the 60s
+      // poll would catch up but this feels responsive).
+      setShipments((prev) => prev.filter((s) => s.orderId !== pickerRow.order.orderId));
+      closePicker();
+      setPendingPick(null);
+    } catch (e) {
+      setPrintError((e as Error).message ?? "Print failed");
+    } finally {
+      setPrinting(false);
+    }
   };
 
   if (!isAuthenticated) {
@@ -557,15 +614,13 @@ export default function PendingShipmentsWork() {
         </div>
       </div>
 
-      {/* Inventory picker — searchable dropdown that opens over the page
-          when a shipper clicks Print. Filters strictly by the row's SKU
-          (only in-stock / not-yet-shipped units of that exact SKU
-          surface), then the shipper can narrow by inventory-id substring
-          if needed. If only one unit exists, they can click it and go. */}
+      {/* Two-step Print flow.
+          Step 1: pick inventory unit (searchable, SKU-scoped).
+          Step 2: confirm — bills postage on click. */}
       {pickerRow && (
         <div
           className="fixed inset-0 bg-black/40 flex items-start justify-center pt-24 z-50"
-          onClick={closePicker}
+          onClick={printing ? undefined : closePicker}
         >
           <div
             className="bg-white rounded-lg shadow-2xl border-2 border-gr-black w-full max-w-lg mx-4"
@@ -573,68 +628,132 @@ export default function PendingShipmentsWork() {
           >
             <div className="flex items-baseline justify-between px-4 py-3 border-b border-slate-200">
               <div>
-                <div className="text-sm font-bold text-gr-black">Pick inventory unit</div>
+                <div className="text-sm font-bold text-gr-black">
+                  {pendingPick ? "Confirm & print" : "Pick inventory unit"}
+                </div>
                 <div className="text-xs text-gray-500 font-mono">{pickerRow.item.sku ?? "—"}</div>
               </div>
               <button
                 onClick={closePicker}
-                className="text-gray-400 hover:text-gr-black text-lg leading-none"
+                disabled={printing}
+                className="text-gray-400 hover:text-gr-black text-lg leading-none disabled:opacity-40"
                 title="Close"
               >
                 ×
               </button>
             </div>
-            <div className="px-4 py-3 border-b border-slate-200">
-              <input
-                type="search"
-                value={pickerQuery}
-                onChange={(e) => setPickerQuery(e.target.value)}
-                placeholder="Filter by inventory ID…"
-                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
-                autoFocus
-              />
-            </div>
-            <div className="max-h-80 overflow-y-auto">
-              {pickerLoading && (
-                <div className="text-center text-gray-500 text-sm py-6">Searching…</div>
-              )}
-              {pickerError && (
-                <div className="text-red-700 bg-red-50 border border-red-300 rounded m-3 px-3 py-2 text-sm">
-                  {pickerError}
+
+            {/* STEP 2: Confirmation */}
+            {pendingPick ? (
+              <div className="px-4 py-4">
+                <div className="mb-3">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider">Order</div>
+                  <div className="font-mono text-sm text-gr-black">
+                    #{pickerRow.order.orderNumber ?? pickerRow.order.orderId}
+                    <span className="text-gray-500 ml-2">
+                      → {pickerRow.order.shipTo?.name ?? "—"}, {pickerRow.order.shipTo?.state ?? "—"}
+                    </span>
+                  </div>
                 </div>
-              )}
-              {!pickerLoading && !pickerError && pickerMatches.length === 0 && (
-                <div className="text-center text-gray-500 text-sm py-6">
-                  No in-stock units for this SKU.
+                <div className="mb-3">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider">Inventory unit</div>
+                  <div className="font-mono text-sm text-gr-black">
+                    #{pendingPick.id}
+                    <span className="text-gray-500 ml-2">
+                      · {pendingPick.serial_number ?? "no serial"}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-600 mt-0.5">{pendingPick.description ?? "—"}</div>
                 </div>
-              )}
-              {!pickerLoading && pickerMatches.length > 0 && (
-                <ul>
-                  {pickerMatches.map((inv) => (
-                    <li key={inv.id}>
-                      <button
-                        onClick={() => confirmPick(inv)}
-                        className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
-                      >
-                        <div className="flex items-baseline justify-between gap-3">
-                          <div className="font-mono font-bold text-gr-black">#{inv.id}</div>
-                          <div className="text-xs text-gray-500 font-mono truncate max-w-[60%]">
-                            {inv.serial_number ?? "no serial"}
-                          </div>
-                        </div>
-                        <div className="text-xs text-gray-600 truncate">
-                          {inv.description ?? "—"}
-                        </div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            {pickerMatches.length > 0 && (
-              <div className="text-xs text-gray-500 px-4 py-2 border-t border-slate-200">
-                {pickerMatches.length} match{pickerMatches.length === 1 ? "" : "es"} · oldest listed first
+                <div className="mb-3">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider">Service</div>
+                  <div className="text-sm text-gr-black">
+                    {(pickerRow.order.carrierCode ?? "—").toUpperCase()} ·{" "}
+                    {pickerRow.order.serviceCode ?? pickerRow.order.requestedShippingService ?? "—"}
+                  </div>
+                </div>
+                <div className="border border-amber-300 bg-amber-50 rounded px-3 py-2 text-xs text-amber-900 mb-3">
+                  <strong>Postage will be billed</strong> the moment you click Print. The label PDF
+                  will open in a new tab and auto-trigger the print dialog.
+                </div>
+                {printError && (
+                  <div className="border border-red-400 bg-red-50 rounded px-3 py-2 text-sm text-red-800 mb-3">
+                    {printError}
+                  </div>
+                )}
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={cancelConfirm}
+                    disabled={printing}
+                    className="px-3 py-2 rounded border border-gray-300 text-gr-black text-sm hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={firePrint}
+                    disabled={printing}
+                    className="px-3 py-2 rounded bg-gr-green-dark text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
+                  >
+                    {printing ? "Printing…" : "Confirm & Print"}
+                  </button>
+                </div>
               </div>
+            ) : (
+              /* STEP 1: Picker */
+              <>
+                <div className="px-4 py-3 border-b border-slate-200">
+                  <input
+                    type="search"
+                    value={pickerQuery}
+                    onChange={(e) => setPickerQuery(e.target.value)}
+                    placeholder="Filter by inventory ID…"
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                    autoFocus
+                  />
+                </div>
+                <div className="max-h-80 overflow-y-auto">
+                  {pickerLoading && (
+                    <div className="text-center text-gray-500 text-sm py-6">Searching…</div>
+                  )}
+                  {pickerError && (
+                    <div className="text-red-700 bg-red-50 border border-red-300 rounded m-3 px-3 py-2 text-sm">
+                      {pickerError}
+                    </div>
+                  )}
+                  {!pickerLoading && !pickerError && pickerMatches.length === 0 && (
+                    <div className="text-center text-gray-500 text-sm py-6">
+                      No in-stock units for this SKU.
+                    </div>
+                  )}
+                  {!pickerLoading && pickerMatches.length > 0 && (
+                    <ul>
+                      {pickerMatches.map((inv) => (
+                        <li key={inv.id}>
+                          <button
+                            onClick={() => confirmPick(inv)}
+                            className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
+                          >
+                            <div className="flex items-baseline justify-between gap-3">
+                              <div className="font-mono font-bold text-gr-black">#{inv.id}</div>
+                              <div className="text-xs text-gray-500 font-mono truncate max-w-[60%]">
+                                {inv.serial_number ?? "no serial"}
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-600 truncate">
+                              {inv.description ?? "—"}
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                {pickerMatches.length > 0 && (
+                  <div className="text-xs text-gray-500 px-4 py-2 border-t border-slate-200">
+                    {pickerMatches.length} match{pickerMatches.length === 1 ? "" : "es"} · oldest listed first
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
