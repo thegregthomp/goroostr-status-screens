@@ -146,19 +146,55 @@ function MarketplaceBadge({ order }: { order: PendingShipment }): JSX.Element | 
   const raw = (order.orderSource ?? order.advancedOptions?.source ?? "").toLowerCase();
   if (!raw) return null;
 
-  // eBay: their iconic 4-color wordmark, per-letter colors on white.
-  // Rendered inline so the whole thing scales with card font size and
-  // stays crisp on a 40" TV without loading an external SVG.
+  // eBay: their iconic 4-color wordmark, per-letter colors. Black
+  // background makes it read as a distinct branded token on the wall
+  // (previous white bg blended with the card). Colors are eBay's exact
+  // brand palette; blue is slightly brighter than #0064D2 so it stays
+  // readable on black. Inline so it scales with card font size and
+  // stays crisp on a 40" TV without an external SVG.
   if (raw.includes("ebay")) {
     return (
       <span
-        className="inline-flex items-baseline px-1.5 py-0.5 rounded-full font-black text-sm bg-white border border-gray-400 leading-none"
+        className="inline-flex items-baseline px-1.5 py-0.5 rounded-full font-black text-sm bg-black border border-black leading-none"
         title="eBay"
       >
         <span style={{ color: "#E53238" }}>e</span>
-        <span style={{ color: "#0064D2" }}>b</span>
+        <span style={{ color: "#3199FF" }}>b</span>
         <span style={{ color: "#F5AF02" }}>a</span>
         <span style={{ color: "#86B817" }}>y</span>
+      </span>
+    );
+  }
+
+  // Amazon: white pill + black lowercase "amazon" + the iconic orange
+  // "a→z" smile arrow beneath. Rendered as inline SVG so the curve stays
+  // crisp at any zoom on the wall TV. Compact vertical stack so the pill
+  // reads as one branded token, not two lines of noise.
+  if (raw.includes("amazon")) {
+    return (
+      <span
+        className="inline-flex flex-col items-center px-2 py-0.5 rounded-md bg-white border border-gray-400 leading-none"
+        title="Amazon"
+        style={{ paddingTop: 2, paddingBottom: 3 }}
+      >
+        <span className="font-black text-black text-sm lowercase tracking-tight leading-none">amazon</span>
+        <svg viewBox="0 0 44 8" className="w-full" style={{ height: 5, marginTop: 1 }} xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M2 3 Q 22 8 42 3"
+            fill="none"
+            stroke="#FF9900"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+          <path
+            d="M38 1.5 L 42 3 L 40 6"
+            fill="none"
+            stroke="#FF9900"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </span>
     );
   }
@@ -191,7 +227,6 @@ function MarketplaceBadge({ order }: { order: PendingShipment }): JSX.Element | 
       {label}
     </span>
   );
-  if (raw.includes("amazon")) return simple("amazon", "bg-black text-orange-400 border-orange-500");
   if (raw.includes("swappa")) return simple("Swappa", "bg-violet-700 text-white border-violet-900");
   if (raw.includes("gazelle")) return simple("Gazelle", "bg-teal-500 text-white border-teal-700");
   if (raw.includes("mercari")) return simple("Mercari", "bg-orange-600 text-white border-orange-800");
@@ -302,33 +337,20 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
         ? "bg-sky-50 border-sky-400"
         : "bg-white border-gr-black";
 
-  // Whether this card has ANY secondary flag — used to conditionally
-  // render the flags row so quiet cards stay quiet (no empty spacer).
+  // Missing-data flags — only apply for pending cards (dim=false).
   const missingSerial = !dim && (o.inventory_status?.missing_serial ?? 0) > 0;
   const missingImei = !dim && (o.inventory_status?.missing_imei ?? 0) > 0;
   const nextDayOk = !dim && post2pm && !batteryCheck;
-  const hasFlags = !!(svc || c.itemCount > 1 || (!dim && batteryCheck) || missingSerial || missingImei || nextDayOk);
 
   return (
     <div className={`rounded-md p-2 border-2 transition-colors ${cardBase}`}>
-      {/* Hero row — SKU is #1 (biggest thing on the card), marketplace is
-          #2 (colored pill on the right). Shippers said the ShipStation
-          order # wasn't useful, so it's gone. Age chip stays on the right
-          but muted since it isn't the primary signal. */}
-      <div className="flex items-baseline justify-between gap-2 mb-0.5">
-        <div className="font-mono text-xl font-black text-gray-900 leading-none truncate flex-1 min-w-0">
-          {c.item.sku ?? "—"}
-          {quantity > 1 && <span className="ml-2 text-gr-green-dark text-base">× {quantity}</span>}
-        </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <MarketplaceBadge order={o} />
-          <span
-            className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-semibold border ${ageBadgeClass(hrs)}`}
-            title={o.orderDate ?? ""}
-          >
-            {ageString(o.orderDate)}
-          </span>
-        </div>
+      {/* Hero row — SKU is #1 and gets the ENTIRE row so long SKUs like
+          "16-2023-MBP-SLV-M2-24GB-512GB" don't truncate. Wrap breaks on
+          any character so nothing gets clipped. Marketplace + age moved
+          to the flags row below. */}
+      <div className="font-mono text-xl font-black text-gray-900 leading-tight break-all mb-0.5">
+        {c.item.sku ?? "—"}
+        {quantity > 1 && <span className="ml-2 text-gr-green-dark text-base">× {quantity}</span>}
       </div>
 
       {/* Model name — subordinate to SKU. Truncated so long names don't
@@ -339,59 +361,66 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
         </div>
       )}
 
-      {/* Flags row — service level + battery / serial / imei / next-day.
-          Only rendered when there's something to show so cards without
-          exceptions stay clean. */}
-      {hasFlags && (
-        <div className="flex items-center gap-1 flex-wrap mb-1">
-          {svc && (
-            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${svc.className}`}>
-              {svc.label}
-            </span>
-          )}
-          {c.itemCount > 1 && (
-            <span
-              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold bg-purple-600 text-white border border-purple-800"
-              title={`${totalUnits} unit(s) across ${c.itemCount} item type(s) on this order`}
-            >
-              {totalUnits} ITEMS
-            </span>
-          )}
-          {!dim && batteryCheck && (
-            <span
-              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-white border border-amber-700"
-              title="Sold 30+ days ago — battery check required before shipping"
-            >
-              <span className="text-sm leading-none">🪫</span>
-              <span>BATTERY CHECK</span>
-            </span>
-          )}
-          {missingSerial && (
-            <span
-              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-red-600 text-white border border-red-800"
-              title={`${o.inventory_status?.missing_serial} of ${o.inventory_status?.linked} linked unit(s) missing a serial number`}
-            >
-              NO SERIAL
-            </span>
-          )}
-          {missingImei && (
-            <span
-              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-orange-500 text-white border border-orange-700"
-              title={`${o.inventory_status?.missing_imei} of ${o.inventory_status?.imei_expected} IMEI-expected unit(s) missing an IMEI`}
-            >
-              NO IMEI
-            </span>
-          )}
-          {nextDayOk && (
-            <span
-              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-300"
-              title="Sold after 2 PM local — no same-day ship requirement"
-            >
-              Next-day OK
-            </span>
-          )}
-        </div>
-      )}
+      {/* Flags row — always rendered because marketplace pill + age chip
+          live here now. Order: marketplace (source is #2 priority) →
+          service → exceptions → age. */}
+      <div className="flex items-center gap-1 flex-wrap mb-1">
+        <MarketplaceBadge order={o} />
+        {svc && (
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${svc.className}`}>
+            {svc.label}
+          </span>
+        )}
+        {c.itemCount > 1 && (
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold bg-purple-600 text-white border border-purple-800"
+            title={`${totalUnits} unit(s) across ${c.itemCount} item type(s) on this order`}
+          >
+            {totalUnits} ITEMS
+          </span>
+        )}
+        {!dim && batteryCheck && (
+          <span
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-white border border-amber-700"
+            title="Sold 30+ days ago — battery check required before shipping"
+          >
+            <span className="text-sm leading-none">🪫</span>
+            <span>BATTERY CHECK</span>
+          </span>
+        )}
+        {missingSerial && (
+          <span
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-red-600 text-white border border-red-800"
+            title={`${o.inventory_status?.missing_serial} of ${o.inventory_status?.linked} linked unit(s) missing a serial number`}
+          >
+            NO SERIAL
+          </span>
+        )}
+        {missingImei && (
+          <span
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-orange-500 text-white border border-orange-700"
+            title={`${o.inventory_status?.missing_imei} of ${o.inventory_status?.imei_expected} IMEI-expected unit(s) missing an IMEI`}
+          >
+            NO IMEI
+          </span>
+        )}
+        {nextDayOk && (
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-300"
+            title="Sold after 2 PM local — no same-day ship requirement"
+          >
+            Next-day OK
+          </span>
+        )}
+        {/* Age chip lives with the other secondary info — it stays visible
+            but isn't fighting the SKU for hero real estate. */}
+        <span
+          className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-semibold border ml-auto ${ageBadgeClass(hrs)}`}
+          title={o.orderDate ?? ""}
+        >
+          {ageString(o.orderDate)}
+        </span>
+      </div>
 
       {/* Footer: customer + city + STATE prominent + total */}
       <div className="flex items-end justify-between gap-2">
