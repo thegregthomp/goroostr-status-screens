@@ -85,6 +85,17 @@ function ageBadgeClass(hours: number): string {
 }
 
 /**
+ * Aged 30+ days → battery check required before shipping.
+ * Lithium-ion cells self-discharge and can hit "puffy / needs-swap"
+ * territory sitting sold-but-not-shipped for a month. This flag drives
+ * the 🪫 badge on the card so shippers spot it from across the shop
+ * floor without reading the sold-at timestamp.
+ */
+function needsBatteryCheck(iso?: string): boolean {
+  return hoursOld(iso) >= 24 * 30;
+}
+
+/**
  * "No same-day ship pressure" flag.
  * Sale placed TODAY after 14:00 local (America/New_York) → no same-day
  * requirement. Older sales always need to ship, no matter the time.
@@ -383,16 +394,23 @@ export default function PendingShipments() {
                     const o = c.order;
                     const hrs = hoursOld(o.orderDate);
                     const post2pm = isPost2pmToday(o.orderDate);
+                    const batteryCheck = needsBatteryCheck(o.orderDate);
                     const shipCity = [o.shipTo?.city, o.shipTo?.state].filter(Boolean).join(", ");
                     const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
                     const quantity = c.item.quantity ?? 1;
                     return (
                       <div
                         key={c.key}
-                        className={`rounded-md p-1.5 border transition-colors ${
-                          post2pm
-                            ? "bg-sky-50 border-sky-400"
-                            : "bg-white border-gr-black"
+                        // Battery-check cards get a heavy amber border + tint so
+                        // they read as "handle before shipping" from across the
+                        // shop floor. Wins over the post-2pm sky tint (aged
+                        // stock is a shipper concern regardless of ship-window).
+                        className={`rounded-md p-1.5 border-2 transition-colors ${
+                          batteryCheck
+                            ? "bg-amber-100 border-amber-500"
+                            : post2pm
+                              ? "bg-sky-50 border-sky-400"
+                              : "bg-white border-gr-black"
                         }`}
                       >
                         {/* Top row: order # + optional item n-of-m + age chip */}
@@ -406,7 +424,16 @@ export default function PendingShipments() {
                                 {c.itemIndex + 1}/{c.itemCount}
                               </span>
                             )}
-                            {post2pm && (
+                            {batteryCheck && (
+                              <span
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-white border border-amber-700"
+                                title="Sold 30+ days ago — battery check required before shipping"
+                              >
+                                <span className="text-sm leading-none">🪫</span>
+                                <span>BATTERY CHECK</span>
+                              </span>
+                            )}
+                            {post2pm && !batteryCheck && (
                               <span
                                 className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-300"
                                 title="Sold after 2 PM local — no same-day ship requirement"
