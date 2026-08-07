@@ -753,12 +753,12 @@ export default function PendingShipments() {
             />
           </section>
 
-          {/* SHIPPED TODAY panel — right 1/3. Vertical divider (border-l)
-              replaces what was the horizontal separator in the stacked
-              layout. Grid drops to 1 column at this width so each card
-              stays readable. */}
+          {/* SHIPPED TODAY panel — right 1/4. Muted emerald wash
+              differentiates the "done" side from the active pending
+              side at a glance without shouting. Rounded + inset pad
+              so the wash reads as a panel, not a page edge. */}
           <section
-            className="flex flex-col min-h-0 border-l-2 border-gr-black/30 pl-3"
+            className="flex flex-col min-h-0 bg-emerald-50/70 border border-emerald-200 rounded-lg p-3"
             style={{ flex: "1 1 0" }}
           >
             <div className="flex-shrink-0 flex items-baseline justify-between mb-2">
