@@ -369,28 +369,49 @@ export default function PendingShipmentsWork() {
     setPrintError(null);
   };
 
-  // Print flow state: after picking an inventory unit we go into a
-  // two-step confirm to avoid a fat-fingered postage charge. Once
-  // confirmed, we call the API, which fires ShipStation
-  // createlabelfororder (BILLS POSTAGE) and returns base64 PDF.
+  // Print flow state:
+  //   pick inventory → confirm modal (with weight override) → fire.
+  // ShipStation Connect on the paired machine has AutoPrint on, so
+  // creating the label via API triggers Connect to physically print
+  // — no browser tab needed. We show a success card with tracking# +
+  // shipmentCost + a fallback "Download PDF" link (in case Connect
+  // hiccups and the physical print didn't happen).
   const [pendingPick, setPendingPick] = useState<InventoryMatch | null>(null);
+  const [weightOz, setWeightOz] = useState<string>("");
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+  const [printResult, setPrintResult] = useState<{
+    trackingNumber: string | null;
+    shipmentCost: number | null;
+    carrierCode: string | null;
+    serviceCode: string | null;
+    labelDataUrl: string | null;
+  } | null>(null);
 
   const confirmPick = (inv: InventoryMatch) => {
-    // Stage the pick — user must click "Confirm & Print" to actually
-    // fire the label call.
     setPendingPick(inv);
     setPrintError(null);
+    // Default the weight input to whatever ShipStation has on the
+    // order (usually populated by automation rules on import). Blank
+    // string if unknown — shipper must fill it in before we submit.
+    const w = pickerRow?.order.weight?.value;
+    setWeightOz(w && w > 0 ? String(w) : "");
   };
 
   const cancelConfirm = () => {
     setPendingPick(null);
     setPrintError(null);
+    setWeightOz("");
   };
 
   const firePrint = async () => {
     if (!pickerRow || !pendingPick) return;
+    // Weight sanity check — refuse to fire on missing/nonsense values.
+    const w = Number(weightOz);
+    if (!weightOz || Number.isNaN(w) || w <= 0) {
+      setPrintError("Enter a weight in ounces before printing.");
+      return;
+    }
     setPrinting(true);
     setPrintError(null);
     try {
@@ -400,42 +421,44 @@ export default function PendingShipmentsWork() {
         body: JSON.stringify({
           orderId: pickerRow.order.orderId,
           inventoryId: pendingPick.id,
+          weightOz: w,
         }),
       });
       const data = await resp.json();
       if (!resp.ok || data.success === false) {
         throw new Error(data.error ?? `HTTP ${resp.status}`);
       }
-      // Turn the base64 PDF into a blob URL and open it in a new tab.
-      // Browsers auto-render PDFs — the shipper hits Cmd+P once and
-      // it goes to whatever printer they've set as default (typically
-      // the same physical shipping-label printer ShipStation Connect
-      // already talks to on that machine).
+      // Convert base64 PDF to a blob URL for the fallback download
+      // button. Connect should have already printed via AutoPrint.
+      let labelDataUrl: string | null = null;
       if (data.labelData) {
         const binary = atob(data.labelData);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const blob = new Blob([bytes], { type: "application/pdf" });
-        const url = URL.createObjectURL(blob);
-        const w = window.open(url, "_blank");
-        // Trigger the browser print dialog once the PDF is loaded so
-        // shippers don't have to Cmd+P themselves in most cases.
-        if (w) {
-          w.addEventListener("load", () => {
-            try { w.print(); } catch { /* pop-up blocker / cross-origin */ }
-          });
-        }
+        labelDataUrl = URL.createObjectURL(blob);
       }
+      setPrintResult({
+        trackingNumber: data.trackingNumber ?? null,
+        shipmentCost: data.shipmentCost ?? null,
+        carrierCode: data.carrierCode ?? null,
+        serviceCode: data.serviceCode ?? null,
+        labelDataUrl,
+      });
       // Drop the pending row from the list optimistically (the 60s
       // poll would catch up but this feels responsive).
       setShipments((prev) => prev.filter((s) => s.orderId !== pickerRow.order.orderId));
-      closePicker();
-      setPendingPick(null);
     } catch (e) {
       setPrintError((e as Error).message ?? "Print failed");
     } finally {
       setPrinting(false);
     }
+  };
+
+  const closePrintResult = () => {
+    if (printResult?.labelDataUrl) URL.revokeObjectURL(printResult.labelDataUrl);
+    setPrintResult(null);
+    closePicker();
   };
 
   if (!isAuthenticated) {
@@ -643,8 +666,53 @@ export default function PendingShipmentsWork() {
               </button>
             </div>
 
-            {/* STEP 2: Confirmation */}
-            {pendingPick ? (
+            {/* STEP 3: Success card — shown after a successful print. */}
+            {printResult ? (
+              <div className="px-4 py-4">
+                <div className="border border-emerald-300 bg-emerald-50 rounded px-3 py-3 mb-3">
+                  <div className="text-emerald-900 font-bold text-sm mb-1">
+                    ✓ Label created — printing on paired machine
+                  </div>
+                  <div className="text-emerald-800 text-xs">
+                    ShipStation Connect's AutoPrint will send this to the label printer wired to
+                    the paired workstation. If it doesn't come out, use the fallback link below.
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-y-1 text-sm mb-3">
+                  <div className="text-gray-500 text-xs uppercase tracking-wider">Tracking</div>
+                  <div className="font-mono text-gr-black">{printResult.trackingNumber ?? "—"}</div>
+                  <div className="text-gray-500 text-xs uppercase tracking-wider">Postage</div>
+                  <div className="text-gr-black">
+                    {printResult.shipmentCost !== null
+                      ? `$${Number(printResult.shipmentCost).toFixed(2)}`
+                      : "—"}
+                  </div>
+                  <div className="text-gray-500 text-xs uppercase tracking-wider">Service</div>
+                  <div className="text-gr-black">
+                    {(printResult.carrierCode ?? "—").toUpperCase()} · {printResult.serviceCode ?? "—"}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  {printResult.labelDataUrl ? (
+                    <a
+                      href={printResult.labelDataUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-gray-600 underline hover:text-gr-black"
+                    >
+                      Open label PDF (fallback)
+                    </a>
+                  ) : <span />}
+                  <button
+                    onClick={closePrintResult}
+                    className="px-3 py-2 rounded bg-gr-green-dark text-white text-sm font-bold hover:opacity-90"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : pendingPick ? (
+              /* STEP 2: Confirmation */
               <div className="px-4 py-4">
                 <div className="mb-3">
                   <div className="text-xs text-gray-500 uppercase tracking-wider">Order</div>
@@ -672,9 +740,31 @@ export default function PendingShipmentsWork() {
                     {pickerRow.order.serviceCode ?? pickerRow.order.requestedShippingService ?? "—"}
                   </div>
                 </div>
+                <div className="mb-3">
+                  <label className="text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                    Weight (oz)
+                    <span className="ml-2 normal-case tracking-normal text-[10px] text-gray-400">
+                      pre-filled from order — verify or override
+                    </span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    value={weightOz}
+                    onChange={(e) => setWeightOz(e.target.value)}
+                    className="w-32 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                    autoFocus
+                  />
+                  <span className="ml-2 text-xs text-gray-500">
+                    {weightOz && !Number.isNaN(Number(weightOz))
+                      ? `≈ ${(Number(weightOz) / 16).toFixed(2)} lb`
+                      : ""}
+                  </span>
+                </div>
                 <div className="border border-amber-300 bg-amber-50 rounded px-3 py-2 text-xs text-amber-900 mb-3">
-                  <strong>Postage will be billed</strong> the moment you click Print. The label PDF
-                  will open in a new tab and auto-trigger the print dialog.
+                  <strong>Postage will be billed</strong> the moment you click Print. Label goes
+                  to the paired machine's printer via ShipStation Connect AutoPrint.
                 </div>
                 {printError && (
                   <div className="border border-red-400 bg-red-50 rounded px-3 py-2 text-sm text-red-800 mb-3">
