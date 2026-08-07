@@ -129,30 +129,72 @@ function isPost2pmToday(iso?: string): boolean {
  * a neutral gray "OTHER" so the wall stays consistent regardless of what
  * ShipStation returns.
  */
-function marketplaceBadge(o: PendingShipment): { label: string; className: string } | null {
-  const raw = (o.orderSource ?? o.advancedOptions?.source ?? "").toLowerCase();
+/**
+ * Marketplace pill sized for TV-distance reading.
+ *
+ * eBay + BackMarket get custom brand-mark treatments (the eBay 4-color
+ * wordmark; BackMarket's chevron + neon lime). Everything else falls
+ * back to a colored pill with the brand's primary bg color — good enough
+ * for less-common sources without shipping bespoke logos.
+ */
+function MarketplaceBadge({ order }: { order: PendingShipment }): JSX.Element | null {
+  const raw = (order.orderSource ?? order.advancedOptions?.source ?? "").toLowerCase();
   if (!raw) return null;
-  // Colors tuned to each marketplace's actual brand identity so the wall
-  // is scannable at TV distance without dedicated logos:
-  //   BackMarket → their neon mint green (#00CC98 → tailwind emerald-400 on black text)
-  //   eBay       → the "e" red (#E53238) as bg with white text
-  //   Amazon     → the primary black wordmark bg + Amazon orange text (#FF9900)
-  //   Swappa     → deep purple (#4E0091 → violet-700)
-  //   Gazelle    → cyan-teal
-  //   Mercari    → warm orange-red (#FF6600 vibe)
-  //   Shopify    → the Shopify green (#95BF47 → lime-500)
-  if (raw.includes("backmarket")) return { label: "BackMarket", className: "bg-emerald-400 text-black border-emerald-700" };
-  if (raw.includes("ebay")) return { label: "eBay", className: "bg-red-600 text-white border-red-800" };
-  if (raw.includes("amazon")) return { label: "amazon", className: "bg-black text-orange-400 border-orange-500" };
-  if (raw.includes("swappa")) return { label: "Swappa", className: "bg-violet-700 text-white border-violet-900" };
-  if (raw.includes("gazelle")) return { label: "Gazelle", className: "bg-teal-500 text-white border-teal-700" };
-  if (raw.includes("mercari")) return { label: "Mercari", className: "bg-orange-600 text-white border-orange-800" };
-  if (raw.includes("shopify")) return { label: "Shopify", className: "bg-lime-500 text-black border-lime-700" };
-  if (raw.includes("manual")) return { label: "Manual", className: "bg-slate-500 text-white border-slate-700" };
-  // Generic: capitalize first letter of the ShipStation value so custom
-  // integrations still get a readable tag.
+
+  // eBay: their iconic 4-color wordmark, per-letter colors on white.
+  // Rendered inline so the whole thing scales with card font size and
+  // stays crisp on a 40" TV without loading an external SVG.
+  if (raw.includes("ebay")) {
+    return (
+      <span
+        className="inline-flex items-baseline px-1.5 py-0.5 rounded-full font-black text-sm bg-white border border-gray-400 leading-none"
+        title="eBay"
+      >
+        <span style={{ color: "#E53238" }}>e</span>
+        <span style={{ color: "#0064D2" }}>b</span>
+        <span style={{ color: "#F5AF02" }}>a</span>
+        <span style={{ color: "#86B817" }}>y</span>
+      </span>
+    );
+  }
+
+  // BackMarket: their neon lime bg + double-chevron mark + black wordmark.
+  // Chevron is rendered as a small black rounded rect containing "«",
+  // matching the visual weight of their logo lockup at this size.
+  if (raw.includes("backmarket")) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-bold border border-lime-700"
+        style={{ backgroundColor: "#E1FA6E", color: "#000" }}
+        title="BackMarket"
+      >
+        <span
+          className="inline-flex items-center justify-center rounded-sm px-1 leading-none text-xs font-black"
+          style={{ backgroundColor: "#000", color: "#E1FA6E" }}
+        >
+          «
+        </span>
+        <span>Back Market</span>
+      </span>
+    );
+  }
+
+  // Fallback path: colored pill + text. Kept simple for less-common
+  // marketplaces where a full brand mark isn't worth the code weight.
+  const simple = (label: string, className: string) => (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${className}`}>
+      {label}
+    </span>
+  );
+  if (raw.includes("amazon")) return simple("amazon", "bg-black text-orange-400 border-orange-500");
+  if (raw.includes("swappa")) return simple("Swappa", "bg-violet-700 text-white border-violet-900");
+  if (raw.includes("gazelle")) return simple("Gazelle", "bg-teal-500 text-white border-teal-700");
+  if (raw.includes("mercari")) return simple("Mercari", "bg-orange-600 text-white border-orange-800");
+  if (raw.includes("shopify")) return simple("Shopify", "bg-lime-500 text-black border-lime-700");
+  if (raw.includes("manual")) return simple("Manual", "bg-slate-500 text-white border-slate-700");
+  // Custom integration → capitalized name, neutral gray.
   const label = raw.charAt(0).toUpperCase() + raw.slice(1, 12);
-  return { label, className: "bg-gray-400 text-white border-gray-600" };
+  return simple(label, "bg-gray-400 text-white border-gray-600");
 }
 
 /**
@@ -239,7 +281,8 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
   const hrs = hoursOld(o.orderDate);
   const post2pm = isPost2pmToday(o.orderDate);
   const batteryCheck = needsBatteryCheck(o.orderDate);
-  const mkt = marketplaceBadge(o);
+  // MarketplaceBadge returns a full JSX pill (custom for eBay/BackMarket,
+  // colored-text fallback for the rest).
   const svc = serviceBadge(o);
   const shipCity = [o.shipTo?.city, o.shipTo?.state].filter(Boolean).join(", ");
   const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
@@ -262,11 +305,7 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
           <span className="text-sm font-bold text-gray-800">
             #{o.orderNumber ?? o.orderId}
           </span>
-          {mkt && (
-            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${mkt.className}`}>
-              {mkt.label}
-            </span>
-          )}
+          <MarketplaceBadge order={o} />
           {svc && (
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${svc.className}`}>
               {svc.label}
