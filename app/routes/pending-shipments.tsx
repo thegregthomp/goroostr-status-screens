@@ -26,6 +26,18 @@ export function links() {
   return [{ rel: "stylesheet", href: stylesheetUrl }];
 }
 
+/**
+ * Force light-mode rendering across all viewers. Wall TV browsers that
+ * honor the OS dark-mode preference otherwise auto-invert form chrome
+ * + native scrollbars, which makes the whole page hard to read against
+ * our light-palette cards. `color-scheme: light` tells the browser the
+ * document is designed for a light background and pins UA widgets to
+ * match.
+ */
+export function meta() {
+  return [{ name: "color-scheme", content: "light" }];
+}
+
 export async function loader({ request }: LoaderArgs) {
   const data = await getPendingShipments();
   return json({
@@ -54,6 +66,18 @@ type PendingShipment = {
     quantity?: number;
     unitPrice?: number;
   }>;
+  /**
+   * Populated by PendingShipmentsController::enrichWithInventoryStatus.
+   * Missing when no matching sales/inventory rows exist for this order
+   * (either the marketplace order isn't in our sales table yet, or the
+   * order was pushed to ShipStation from a source we don't track).
+   */
+  inventory_status?: {
+    linked: number;
+    missing_serial: number;
+    imei_expected: number;
+    missing_imei: number;
+  };
 };
 
 /** "3h 12m ago", "2d 4h ago" — compact age display. */
@@ -345,7 +369,10 @@ export default function PendingShipments() {
   const totalValue = sorted.reduce((s, o) => s + Number(o.orderTotal ?? 0), 0);
 
   return (
-    <main className="relative h-screen overflow-hidden bg-gr-beige-light">
+    <main
+      className="relative h-screen overflow-hidden bg-gr-beige-light"
+      style={{ colorScheme: "light" }}
+    >
       <div className="h-full flex flex-col p-4 pr-24">
         {/* Header — fixed height so the scroll container below owns the rest. */}
         <div className="flex-shrink-0 flex items-baseline justify-between mb-3">
@@ -431,6 +458,29 @@ export default function PendingShipments() {
                               >
                                 <span className="text-sm leading-none">🪫</span>
                                 <span>BATTERY CHECK</span>
+                              </span>
+                            )}
+                            {/* Missing-serial + missing-IMEI badges (Akeem's ask,
+                                2026-08-07). Shown per-order (not per-item) — the
+                                inventory_status is aggregated across every
+                                inventory row linked to this ShipStation order.
+                                Duplicates across the order's item cards on
+                                purpose so a shipper sees the flag no matter
+                                which card they land on. */}
+                            {(o.inventory_status?.missing_serial ?? 0) > 0 && (
+                              <span
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-red-600 text-white border border-red-800"
+                                title={`${o.inventory_status?.missing_serial} of ${o.inventory_status?.linked} linked unit(s) missing a serial number`}
+                              >
+                                NO SERIAL
+                              </span>
+                            )}
+                            {(o.inventory_status?.missing_imei ?? 0) > 0 && (
+                              <span
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold bg-orange-500 text-white border border-orange-700"
+                                title={`${o.inventory_status?.missing_imei} of ${o.inventory_status?.imei_expected} IMEI-expected unit(s) missing an IMEI`}
+                              >
+                                NO IMEI
                               </span>
                             )}
                             {post2pm && !batteryCheck && (
