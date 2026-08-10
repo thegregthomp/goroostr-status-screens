@@ -48,6 +48,7 @@ type PendingShipment = {
   orderId?: number;
   orderNumber?: string;
   orderDate?: string;
+  shipDate?: string;
   orderTotal?: number;
   customerEmail?: string;
   orderSource?: string;
@@ -56,6 +57,9 @@ type PendingShipment = {
   carrierCode?: string;
   packageCode?: string;
   confirmation?: string;
+  // Only present on shipped-today rows (from ShipStation /shipments).
+  trackingNumber?: string | null;
+  shipmentCost?: number | null;
   weight?: { value?: number; units?: string };
   internalNotes?: string | null;
   advancedOptions?: {
@@ -249,6 +253,11 @@ function toRows(shipments: PendingShipment[]): WorkRow[] {
 export default function PendingShipmentsWork() {
   const initial = useLoaderData<typeof loader>();
   const [shipments, setShipments] = useState<PendingShipment[]>(initial.shipments ?? []);
+  const [shippedToday, setShippedToday] = useState<PendingShipment[]>(initial.shipped_today ?? []);
+  // Tab state: Pending (default) vs Shipped Today. Shipped rows are
+  // read-only — no Print button, just a listing of what's already
+  // shipped with tracking numbers.
+  const [tab, setTab] = useState<"pending" | "shipped">("pending");
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -308,6 +317,7 @@ export default function PendingShipmentsWork() {
       const resp = await fetch(`${apiEndpoint}/pending-shipments`);
       const data = await resp.json();
       setShipments(data.shipments ?? []);
+      setShippedToday(data.shipped_today ?? []);
       setLoadError(data.success === false ? data.error ?? "Failed to load" : null);
       setLastUpdated(new Date());
     } catch (e) {
@@ -327,19 +337,34 @@ export default function PendingShipmentsWork() {
 
   const rows = useMemo(() => toRows(sorted), [sorted]);
 
-  // Search filter: matches any SKU on the order, order#, customer name,
-  // or city.
-  const filtered = useMemo(() => {
+  // Shipped-today rows — sorted newest-shipped first so the most
+  // recent throughput sits on top.
+  const shippedSorted = useMemo(() => {
+    return [...shippedToday].sort((a, b) => {
+      const at = a.shipDate ? DateTime.fromISO(a.shipDate).toMillis() : 0;
+      const bt = b.shipDate ? DateTime.fromISO(b.shipDate).toMillis() : 0;
+      return bt - at;
+    });
+  }, [shippedToday]);
+
+  const shippedRows = useMemo(() => toRows(shippedSorted), [shippedSorted]);
+
+  // Search filter — same predicate applied to whichever tab is active,
+  // so the search box works consistently.
+  const filterRows = (list: WorkRow[]): WorkRow[] => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => {
+    if (!q) return list;
+    return list.filter((r) => {
       const orderNo = (r.order.orderNumber ?? "").toLowerCase();
       const name = (r.order.shipTo?.name ?? r.order.customerEmail ?? "").toLowerCase();
       const city = (r.order.shipTo?.city ?? "").toLowerCase();
       const anySku = r.items.some((it) => (it.sku ?? "").toLowerCase().includes(q));
-      return anySku || orderNo.includes(q) || name.includes(q) || city.includes(q);
+      const tracking = (r.order.trackingNumber ?? "").toLowerCase();
+      return anySku || orderNo.includes(q) || name.includes(q) || city.includes(q) || tracking.includes(q);
     });
-  }, [rows, query]);
+  };
+  const filtered = useMemo(() => filterRows(rows), [rows, query]);
+  const filteredShipped = useMemo(() => filterRows(shippedRows), [shippedRows, query]);
 
   // Print flow state — three stages:
   //   1. picker    — one section per SKU on the order; each collects
@@ -802,8 +827,17 @@ export default function PendingShipmentsWork() {
           <div className="flex items-baseline gap-3">
             <h1 className="text-2xl font-bold text-gr-black">Shipping Work</h1>
             <span className="text-sm font-semibold text-gr-black/70">
-              {filtered.length}
-              <span className="text-gr-black/50"> of {rows.length} rows · {sorted.length} orders</span>
+              {tab === "pending" ? (
+                <>
+                  {filtered.length}
+                  <span className="text-gr-black/50"> of {rows.length} rows · {sorted.length} orders</span>
+                </>
+              ) : (
+                <>
+                  {filteredShipped.length}
+                  <span className="text-gr-black/50"> of {shippedRows.length} shipped today</span>
+                </>
+              )}
             </span>
           </div>
           <div className="flex items-center gap-3 text-xs text-gray-600">
@@ -812,6 +846,32 @@ export default function PendingShipmentsWork() {
               {isRefreshing && " · refreshing…"}
             </span>
           </div>
+        </div>
+
+        {/* Tabs — Pending (active) / Shipped Today */}
+        <div className="flex items-center gap-1 border-b border-slate-300 mb-3">
+          <button
+            onClick={() => setTab("pending")}
+            className={`px-4 py-2 text-sm font-bold border-b-2 -mb-px transition-colors ${
+              tab === "pending"
+                ? "border-gr-green-dark text-gr-black"
+                : "border-transparent text-gray-500 hover:text-gr-black"
+            }`}
+          >
+            Pending
+            <span className="ml-2 text-xs font-semibold text-gray-500">{sorted.length}</span>
+          </button>
+          <button
+            onClick={() => setTab("shipped")}
+            className={`px-4 py-2 text-sm font-bold border-b-2 -mb-px transition-colors ${
+              tab === "shipped"
+                ? "border-gr-green-dark text-gr-black"
+                : "border-transparent text-gray-500 hover:text-gr-black"
+            }`}
+          >
+            Shipped Today
+            <span className="ml-2 text-xs font-semibold text-gray-500">{shippedSorted.length}</span>
+          </button>
         </div>
 
         {/* Search + errors */}
@@ -830,7 +890,8 @@ export default function PendingShipmentsWork() {
           </div>
         )}
 
-        {/* Table */}
+        {/* Table — pending tab active */}
+        {tab === "pending" && (
         <div className="border-2 border-gr-black rounded-lg overflow-hidden bg-white">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -937,6 +998,101 @@ export default function PendingShipmentsWork() {
             </table>
           </div>
         </div>
+        )}
+
+        {/* Table — shipped-today tab. Read-only, no Print button.
+            Shows tracking + ship time + cost so shippers can spot-
+            check what went out today without opening ShipStation. */}
+        {tab === "shipped" && (
+        <div className="border-2 border-gr-black rounded-lg overflow-hidden bg-white">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-slate-700 text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="text-left px-2 py-2">Shipped</th>
+                  <th className="text-left px-2 py-2">SKU</th>
+                  <th className="text-left px-2 py-2">Model</th>
+                  <th className="text-left px-2 py-2">Marketplace</th>
+                  <th className="text-left px-2 py-2">Service</th>
+                  <th className="text-left px-2 py-2">Customer</th>
+                  <th className="text-left px-2 py-2">State</th>
+                  <th className="text-left px-2 py-2">Tracking</th>
+                  <th className="text-right px-2 py-2">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredShipped.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="text-center text-gray-500 py-8">
+                      {shippedRows.length === 0 ? "Nothing shipped yet today." : "No rows match that search."}
+                    </td>
+                  </tr>
+                )}
+                {filteredShipped.map((r, idx) => {
+                  const o = r.order;
+                  const svc = serviceBadge(o);
+                  const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
+                  const key = `${o.orderId ?? o.orderNumber}-shipped`;
+                  const shipTime = o.shipDate
+                    ? DateTime.fromISO(o.shipDate).setZone("America/New_York").toFormat("h:mm a")
+                    : "—";
+                  return (
+                    <tr
+                      key={key}
+                      className={`border-t border-slate-200 hover:bg-slate-50 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/50"}`}
+                    >
+                      <td className="px-2 py-2 whitespace-nowrap text-xs text-gray-600 align-top">
+                        {shipTime}
+                      </td>
+                      <td className="px-2 py-2 font-mono font-bold text-gray-900 align-top">
+                        {r.items.map((it, i) => (
+                          <div key={i} className={i > 0 ? "mt-0.5" : ""}>
+                            {it.sku ?? "—"}
+                            {(it.quantity ?? 1) > 1 && (
+                              <span className="ml-1 text-gr-green-dark text-xs">× {it.quantity}</span>
+                            )}
+                          </div>
+                        ))}
+                      </td>
+                      <td className="px-2 py-2 text-gray-700 max-w-xs align-top">
+                        {r.items.map((it, i) => (
+                          <div key={i} className={`truncate ${i > 0 ? "mt-0.5" : ""}`} title={it.name ?? ""}>
+                            {it.name ?? "—"}
+                          </div>
+                        ))}
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap align-top">
+                        <MarketplaceBadge order={o} />
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap align-top">
+                        {svc && (
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${svc.className}`}>
+                            {svc.label}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-gray-800 font-medium whitespace-nowrap max-w-[14ch] truncate align-top" title={customer}>
+                        {customer}
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap align-top">
+                        {o.shipTo?.state && <StateToken state={o.shipTo.state} />}
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap align-top font-mono text-xs text-gr-black">
+                        {o.trackingNumber ?? "—"}
+                      </td>
+                      <td className="px-2 py-2 text-right whitespace-nowrap align-top font-bold text-gr-black">
+                        {o.shipmentCost !== null && o.shipmentCost !== undefined
+                          ? `$${Number(o.shipmentCost).toFixed(2)}`
+                          : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        )}
       </div>
 
       {/* Three-stage Print flow.
