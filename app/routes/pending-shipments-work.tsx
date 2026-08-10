@@ -374,6 +374,13 @@ export default function PendingShipmentsWork() {
   //   none | delivery | signature | adult_signature | direct_signature
   const [confirmation, setConfirmation] = useState<string>("none");
   const [insuranceAmount, setInsuranceAmount] = useState<string>("");
+  // Insurance provider — carrier (usually cheapest, default in
+  // ShipStation UI too) | shipsurance (ShipStation's third-party) |
+  // xcover (another third-party option). Only used when
+  // insuranceAmount > 0. Was hardcoded to shipsurance before, which
+  // caused otherCost to be higher than the ShipStation UI showed
+  // for the same shipment.
+  const [insuranceProvider, setInsuranceProvider] = useState<string>("carrier");
   // Dropdown-per-service UX (2026-08-10 redesign, replacing the full
   // rate table): shipper picks a carrier, then a service, and we
   // fetch a SINGLE rate for that specific pair. Much faster than the
@@ -469,6 +476,7 @@ export default function PendingShipmentsWork() {
     setDimW("");
     setDimH("");
     setInsuranceAmount("");
+    setInsuranceProvider("carrier");
     setConfirmation("none");
     setRate(null);
     setRateLoading(false);
@@ -517,7 +525,7 @@ export default function PendingShipmentsWork() {
             carrierCodes: [pickedCarrier],
             serviceCode: pickedService,
             ...(dims ? { dimensions: dims } : {}),
-            ...(insurance > 0 ? { insuranceAmount: insurance } : {}),
+            ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider } : {}),
           }),
           signal: controller.signal,
         });
@@ -538,7 +546,7 @@ export default function PendingShipmentsWork() {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, pickedCarrier, pickedService]);
+  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, pickedCarrier, pickedService]);
 
   // Fetch the account's configured carriers when confirm-mode opens.
   useEffect(() => {
@@ -678,7 +686,7 @@ export default function PendingShipmentsWork() {
           residential,
           confirmation,
           ...(dims ? { dimensions: dims } : {}),
-          ...(insurance > 0 ? { insuranceAmount: insurance } : {}),
+          ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider } : {}),
         }),
       });
       const data = await resp.json();
@@ -1359,19 +1367,34 @@ export default function PendingShipmentsWork() {
                 {(pickerRow.order.orderTotal ?? 0) > 10000 && (
                   <div>
                     <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
-                      Insurance top-up ($)
+                      Insurance top-up
                       <span className="ml-1 normal-case tracking-normal text-[9px] text-gray-400">
                         our policy covers first $10k · order total ${Number(pickerRow.order.orderTotal).toFixed(2)}
                       </span>
                     </label>
-                    <input
-                      type="number"
-                      step="1"
-                      min="0"
-                      value={insuranceAmount}
-                      onChange={(e) => setInsuranceAmount(e.target.value)}
-                      className="w-40 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
-                    />
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600">$</span>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={insuranceAmount}
+                        onChange={(e) => setInsuranceAmount(e.target.value)}
+                        className="w-32 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                        placeholder="Amount"
+                      />
+                      <span className="text-sm text-gray-600 ml-2">via</span>
+                      <select
+                        value={insuranceProvider}
+                        onChange={(e) => setInsuranceProvider(e.target.value)}
+                        disabled={!insuranceAmount || Number(insuranceAmount) <= 0}
+                        className="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark disabled:opacity-50"
+                      >
+                        <option value="carrier">Carrier (usually cheapest)</option>
+                        <option value="shipsurance">ShipStation (Shipsurance)</option>
+                        <option value="xcover">XCover</option>
+                      </select>
+                    </div>
                   </div>
                 )}
 
@@ -1433,7 +1456,11 @@ export default function PendingShipmentsWork() {
                         <div className="flex items-baseline justify-between">
                           <span className="text-gray-600">
                             {insurance > 0
-                              ? `Insurance (Shipsurance, $${insurance.toLocaleString()})`
+                              ? `Insurance (${
+                                  insuranceProvider === "shipsurance" ? "Shipsurance"
+                                  : insuranceProvider === "xcover" ? "XCover"
+                                  : "Carrier"
+                                }, $${insurance.toLocaleString()})`
                               : "Other (confirmation/handling)"}
                           </span>
                           <span className="font-mono text-gr-black">${other.toFixed(2)}</span>
