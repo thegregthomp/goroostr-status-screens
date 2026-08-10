@@ -381,6 +381,11 @@ export default function PendingShipmentsWork() {
   // caused otherCost to be higher than the ShipStation UI showed
   // for the same shipment.
   const [insuranceProvider, setInsuranceProvider] = useState<string>("carrier");
+  // For orders under $10k, insurance is opt-in via this toggle. For
+  // orders over $10k the section is always visible and pre-fills the
+  // top-up amount (our external policy covers first $10k, they need
+  // ShipStation-side coverage for the difference).
+  const [insuranceEnabled, setInsuranceEnabled] = useState<boolean>(false);
   // Dropdown-per-service UX (2026-08-10 redesign, replacing the full
   // rate table): shipper picks a carrier, then a service, and we
   // fetch a SINGLE rate for that specific pair. Much faster than the
@@ -391,16 +396,22 @@ export default function PendingShipmentsWork() {
   const [servicesLoading, setServicesLoading] = useState(false);
   const [pickedCarrier, setPickedCarrier] = useState<string | null>(null);
   const [pickedService, setPickedService] = useState<string | null>(null);
-  // Single-rate result (was: array of rates for the grid).
-  const [rate, setRate] = useState<{
+  // Rates array — all services for the currently-picked carrier.
+  // Middle-ground between the old cross-carrier grid (slow, rate-
+  // limit-thrashing) and the pure dropdown (fast but no comparison).
+  // ONE ShipStation call per carrier change, all services shown as a
+  // click-to-select table.
+  const [rates, setRates] = useState<Array<{
+    carrierCode: string;
+    serviceCode: string;
     serviceName: string;
     shipmentCost: number;
     otherCost: number;
     transitDays: number | null;
     transitDaysEstimated?: boolean;
-  } | null>(null);
-  const [rateLoading, setRateLoading] = useState(false);
-  const [rateError, setRateError] = useState<string | null>(null);
+  }>>([]);
+  const [ratesLoading, setRatesLoading] = useState(false);
+  const [ratesError, setRatesError] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printResult, setPrintResult] = useState<{
@@ -446,14 +457,22 @@ export default function PendingShipmentsWork() {
     // BackMarket/eBay's automation stamped a signature requirement on
     // the order, the shipper should have to explicitly opt in.
     setConfirmation("none");
-    // Insurance top-up defaults to (orderTotal - 10000) if that's positive.
-    // External policy covers first $10k, so we only need supplemental
-    // ShipStation coverage on the difference. Whole dollars.
+    // Insurance behavior depends on order value:
+    //   > $10k → auto-enabled, top-up = orderTotal - 10000
+    //     (external policy covers first $10k, ShipStation covers rest)
+    //   ≤ $10k → opt-in via toggle; blank amount until shipper turns
+    //     it on and enters what they want
     const orderTotal = row.order.orderTotal ?? 0;
     const topUp = Math.max(0, Math.floor(orderTotal - 10000));
-    setInsuranceAmount(topUp > 0 ? String(topUp) : "");
-    setRate(null);
-    setRateError(null);
+    if (topUp > 0) {
+      setInsuranceAmount(String(topUp));
+      setInsuranceEnabled(true);
+    } else {
+      setInsuranceAmount("");
+      setInsuranceEnabled(false);
+    }
+    setRates([]);
+    setRatesError(null);
     setServices([]);
     // Default carrier + service to whatever the order already has —
     // so a "just print with existing settings" flow is one click
@@ -477,10 +496,11 @@ export default function PendingShipmentsWork() {
     setDimH("");
     setInsuranceAmount("");
     setInsuranceProvider("carrier");
+    setInsuranceEnabled(false);
     setConfirmation("none");
-    setRate(null);
-    setRateLoading(false);
-    setRateError(null);
+    setRates([]);
+    setRatesLoading(false);
+    setRatesError(null);
     setCarriers([]);
     setCarriersLoading(false);
     setServices([]);
@@ -489,26 +509,28 @@ export default function PendingShipmentsWork() {
     setPickedService(null);
   };
 
-  // Rate fetch — fires when the shopper has picked BOTH a carrier
-  // and a service AND weight is set. Restricted to that specific
-  // pair via carrierCodes+serviceCode, so ShipStation returns a
-  // single rate instead of the full carrier catalog (5s→1-2s).
-  // Debounced 300ms so weight typing doesn't spam ShipStation.
+  // Rate fetch — fires when the shopper has picked a carrier AND
+  // weight is set. Scoped to that ONE carrier via carrierCodes:[X]
+  // (no serviceCode restriction) so ShipStation returns ALL services
+  // for that carrier in one call. Middle-ground between the old
+  // multi-carrier grid (slow, rate-limited) and the pure dropdown
+  // (fast but no comparison): user sees every service for the carrier
+  // as a table, clicks one to select. Debounced 300ms.
   useEffect(() => {
     if (!pickerRow || !confirmMode) return;
-    if (!pickedCarrier || !pickedService) {
-      setRate(null);
+    if (!pickedCarrier) {
+      setRates([]);
       return;
     }
     const totalOz = (Number(weightLb) || 0) * 16 + (Number(weightOz) || 0);
     if (totalOz <= 0) {
-      setRate(null);
+      setRates([]);
       return;
     }
     const controller = new AbortController();
     const t = setTimeout(async () => {
-      setRateLoading(true);
-      setRateError(null);
+      setRatesLoading(true);
+      setRatesError(null);
       try {
         const dims = (dimL && dimW && dimH)
           ? { length: Number(dimL), width: Number(dimW), height: Number(dimH) }
@@ -523,7 +545,6 @@ export default function PendingShipmentsWork() {
             packageCode,
             residential,
             carrierCodes: [pickedCarrier],
-            serviceCode: pickedService,
             ...(dims ? { dimensions: dims } : {}),
             ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider } : {}),
           }),
@@ -533,20 +554,19 @@ export default function PendingShipmentsWork() {
         if (!resp.ok || data.success === false) {
           throw new Error(data.error ?? `HTTP ${resp.status}`);
         }
-        const first = (data.rates ?? [])[0] ?? null;
-        setRate(first);
+        setRates(data.rates ?? []);
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
-        setRateError((e as Error).message ?? "Rate lookup failed");
+        setRatesError((e as Error).message ?? "Rate lookup failed");
       } finally {
-        setRateLoading(false);
+        setRatesLoading(false);
       }
     }, 300);
     return () => {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, pickedCarrier, pickedService]);
+  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, pickedCarrier]);
 
   // Fetch the account's configured carriers when confirm-mode opens.
   useEffect(() => {
@@ -1289,114 +1309,197 @@ export default function PendingShipmentsWork() {
                   </div>
                 </div>
 
-                {/* Carrier + Service dropdowns → single rate fetch.
-                    Replaced the multi-carrier rate table (2026-08-10
-                    Greg's ask): fetching all carriers' rates upfront
-                    was ~5s and mostly wasted work since shippers know
-                    which service they want. Now: pick carrier, then
-                    service, then ONE rate call for that pair. */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2">
-                      Carrier
-                      {carriersLoading && (
-                        <svg className="w-3 h-3 animate-spin text-gr-green-dark" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                      )}
-                    </label>
-                    <select
-                      value={pickedCarrier ?? ""}
-                      onChange={(e) => {
-                        setPickedCarrier(e.target.value || null);
-                        // Reset service — the new carrier has its own
-                        // service list.
-                        setPickedService(null);
-                      }}
-                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
-                    >
-                      <option value="">— pick a carrier —</option>
-                      {carriers.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.name || c.code.toUpperCase()}
-                        </option>
-                      ))}
-                      {/* Surface the order's carrier if it's not in
-                          the fetched list (edge case). */}
-                      {pickedCarrier && !carriers.some((c) => c.code === pickedCarrier) && (
-                        <option value={pickedCarrier}>
-                          {pickedCarrier.toUpperCase()} {carriersLoading ? "(loading…)" : "(from order)"}
-                        </option>
-                      )}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2">
-                      Service
-                      {servicesLoading && (
-                        <svg className="w-3 h-3 animate-spin text-gr-green-dark" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                      )}
-                    </label>
-                    <select
-                      value={pickedService ?? ""}
-                      onChange={(e) => setPickedService(e.target.value || null)}
-                      disabled={!pickedCarrier}
-                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <option value="">— pick a service —</option>
-                      {services.map((s) => (
-                        <option key={s.code} value={s.code}>
-                          {s.name || s.code}
-                        </option>
-                      ))}
-                      {/* Order's service if not in fetched list. */}
-                      {pickedService && !services.some((s) => s.code === pickedService) && (
-                        <option value={pickedService}>
-                          {pickedService} {servicesLoading ? "(loading…)" : "(from order)"}
-                        </option>
-                      )}
-                    </select>
-                  </div>
+                {/* Carrier dropdown → rate table (all services for
+                    that carrier). Middle-ground design after live-
+                    testing feedback: Jon liked seeing the full service
+                    comparison, but shopping ALL carriers at once was
+                    slow (~5s) and rate-limited. Scoping to ONE carrier
+                    is one ShipStation call (~1-2s) and still shows
+                    every service side-by-side for that carrier.
+                    Switch carrier → new table. */}
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                    Carrier
+                    {carriersLoading && (
+                      <svg className="w-3 h-3 animate-spin text-gr-green-dark" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    )}
+                  </label>
+                  <select
+                    value={pickedCarrier ?? ""}
+                    onChange={(e) => {
+                      setPickedCarrier(e.target.value || null);
+                      // Reset service — the new carrier has its own
+                      // service list.
+                      setPickedService(null);
+                    }}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                  >
+                    <option value="">— pick a carrier —</option>
+                    {carriers.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.name || c.code.toUpperCase()}
+                      </option>
+                    ))}
+                    {pickedCarrier && !carriers.some((c) => c.code === pickedCarrier) && (
+                      <option value={pickedCarrier}>
+                        {pickedCarrier.toUpperCase()} {carriersLoading ? "(loading…)" : "(from order)"}
+                      </option>
+                    )}
+                  </select>
                 </div>
 
-                {/* Insurance top-up — only when order value > $10k. */}
-                {(pickerRow.order.orderTotal ?? 0) > 10000 && (
+                {/* Rate table for the picked carrier. All services
+                    with cost + transit, click a row to select. */}
+                {pickedCarrier && (
                   <div>
-                    <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
-                      Insurance top-up
-                      <span className="ml-1 normal-case tracking-normal text-[9px] text-gray-400">
-                        our policy covers first $10k · order total ${Number(pickerRow.order.orderTotal).toFixed(2)}
-                      </span>
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-600">$</span>
-                      <input
-                        type="number"
-                        step="1"
-                        min="0"
-                        value={insuranceAmount}
-                        onChange={(e) => setInsuranceAmount(e.target.value)}
-                        className="w-32 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
-                        placeholder="Amount"
-                      />
-                      <span className="text-sm text-gray-600 ml-2">via</span>
-                      <select
-                        value={insuranceProvider}
-                        onChange={(e) => setInsuranceProvider(e.target.value)}
-                        disabled={!insuranceAmount || Number(insuranceAmount) <= 0}
-                        className="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark disabled:opacity-50"
-                      >
-                        <option value="carrier">Carrier (usually cheapest)</option>
-                        <option value="shipsurance">ShipStation (Shipsurance)</option>
-                        <option value="xcover">XCover</option>
-                      </select>
+                    <div className="flex items-baseline justify-between mb-1">
+                      <label className="text-[10px] text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                        {(pickedCarrier ?? "").toUpperCase()} services
+                        {ratesLoading && (
+                          <span className="inline-flex items-center gap-1 normal-case tracking-normal text-gr-green-dark font-semibold">
+                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Fetching rates…
+                          </span>
+                        )}
+                      </label>
+                    </div>
+                    <div className="border border-slate-200 rounded max-h-56 overflow-y-auto relative">
+                      {ratesLoading && rates.length === 0 && (
+                        <div className="text-center text-gr-black text-sm py-8 space-y-2">
+                          <svg className="w-5 h-5 animate-spin mx-auto text-gr-green-dark" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          <div className="text-xs text-gray-500">Getting {pickedCarrier.toUpperCase()} rates…</div>
+                        </div>
+                      )}
+                      {ratesLoading && rates.length > 0 && (
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gr-green-dark/40 animate-pulse z-10" />
+                      )}
+                      {ratesError && (
+                        <div className="text-red-700 bg-red-50 border-b border-red-300 px-3 py-2 text-sm">
+                          {ratesError}
+                        </div>
+                      )}
+                      {!ratesError && rates.length === 0 && !ratesLoading && (
+                        <div className="text-center text-gray-500 text-sm py-6">
+                          No rates yet — enter a weight to see options.
+                        </div>
+                      )}
+                      {rates.length > 0 && (
+                        <table className="w-full text-sm">
+                          <thead className="bg-slate-50 text-slate-700 text-xs uppercase tracking-wider">
+                            <tr>
+                              <th className="text-left px-2 py-1">Service</th>
+                              <th className="text-right px-2 py-1">Transit</th>
+                              <th className="text-right px-2 py-1">Cost</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rates.map((r) => {
+                              const isPicked = r.serviceCode === pickedService;
+                              const total = r.shipmentCost + r.otherCost;
+                              return (
+                                <tr
+                                  key={r.serviceCode}
+                                  onClick={() => setPickedService(r.serviceCode)}
+                                  className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${isPicked ? "bg-gr-mint-100" : ""}`}
+                                >
+                                  <td className="px-2 py-1 text-gr-black">{r.serviceName || r.serviceCode}</td>
+                                  <td
+                                    className="px-2 py-1 text-right text-gray-600 whitespace-nowrap"
+                                    title={r.transitDaysEstimated ? "Estimated max transit — carrier didn't provide a specific number" : ""}
+                                  >
+                                    {r.transitDays !== null
+                                      ? `${r.transitDaysEstimated ? "~" : ""}${r.transitDays}d`
+                                      : "—"}
+                                  </td>
+                                  <td className="px-2 py-1 text-right font-bold text-gr-black whitespace-nowrap">
+                                    ${total.toFixed(2)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
                   </div>
                 )}
+
+                {/* Insurance section.
+                    Over $10k: always visible + auto-enabled + top-up
+                      pre-filled with (orderTotal - 10000). External
+                      policy covers first $10k, ShipStation covers rest.
+                    Under $10k: opt-in via checkbox toggle. When
+                      enabled, shipper types the amount they want. */}
+                {(() => {
+                  const orderTotal = pickerRow.order.orderTotal ?? 0;
+                  const isHighValue = orderTotal > 10000;
+                  const topUp = Math.max(0, Math.floor(orderTotal - 10000));
+                  return (
+                    <div>
+                      <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                        {isHighValue ? (
+                          <>
+                            Insurance top-up
+                            <span className="normal-case tracking-normal text-[9px] text-gray-400 font-normal">
+                              order total ${orderTotal.toLocaleString()} · our policy covers first $10k · top-up ${topUp.toLocaleString()}
+                            </span>
+                          </>
+                        ) : (
+                          <label className="flex items-center gap-2 cursor-pointer normal-case tracking-normal font-normal text-sm text-gr-black">
+                            <input
+                              type="checkbox"
+                              checked={insuranceEnabled}
+                              onChange={(e) => {
+                                setInsuranceEnabled(e.target.checked);
+                                if (!e.target.checked) {
+                                  setInsuranceAmount("");
+                                }
+                              }}
+                            />
+                            <span>Add insurance</span>
+                            <span className="text-[9px] text-gray-400 uppercase tracking-wider">
+                              (order under $10k — optional)
+                            </span>
+                          </label>
+                        )}
+                      </label>
+                      {(isHighValue || insuranceEnabled) && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-600">$</span>
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={insuranceAmount}
+                            onChange={(e) => setInsuranceAmount(e.target.value)}
+                            className="w-32 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                            placeholder={isHighValue ? "Top-up amount" : "Insured value"}
+                          />
+                          <span className="text-sm text-gray-600 ml-2">via</span>
+                          <select
+                            value={insuranceProvider}
+                            onChange={(e) => setInsuranceProvider(e.target.value)}
+                            disabled={!insuranceAmount || Number(insuranceAmount) <= 0}
+                            className="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark disabled:opacity-50"
+                          >
+                            <option value="carrier">Carrier (usually cheapest)</option>
+                            <option value="shipsurance">ShipStation (Shipsurance)</option>
+                            <option value="xcover">XCover</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Rate card — shows the cost breakdown for the
                     carrier+service pair the shipper picked. States:
@@ -1407,43 +1510,38 @@ export default function PendingShipmentsWork() {
                     ShipStation's `otherCost` includes any Shipsurance
                     premium (we pass insurance into /getrates), so it's
                     the real number, not an estimate. */}
-                {(!pickedCarrier || !pickedService) && (
-                  <div className="border border-slate-200 bg-slate-50 rounded px-3 py-2 text-sm text-gray-500 text-center">
-                    Pick a carrier and service to see the rate.
-                  </div>
-                )}
-                {pickedCarrier && pickedService && rateLoading && !rate && (
-                  <div className="border border-slate-200 bg-slate-50 rounded px-3 py-3 text-sm text-center flex items-center justify-center gap-2 text-gr-green-dark">
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    <span className="font-semibold">Getting rate from ShipStation…</span>
-                  </div>
-                )}
-                {rateError && (
-                  <div className="border border-red-400 bg-red-50 rounded px-3 py-2 text-sm text-red-800">
-                    {rateError}
-                  </div>
-                )}
                 {(() => {
-                  if (!rate) return null;
+                  const picked = rates.find((r) => r.serviceCode === pickedService);
+                  if (!picked) {
+                    if (!pickedCarrier) {
+                      return (
+                        <div className="border border-slate-200 bg-slate-50 rounded px-3 py-2 text-sm text-gray-500 text-center">
+                          Pick a carrier to see available rates.
+                        </div>
+                      );
+                    }
+                    if (!pickedService) {
+                      return (
+                        <div className="border border-slate-200 bg-slate-50 rounded px-3 py-2 text-sm text-gray-500 text-center">
+                          Click a service in the table above to select it.
+                        </div>
+                      );
+                    }
+                    return null;
+                  }
                   const insurance = Number(insuranceAmount) || 0;
-                  const shipping = rate.shipmentCost;
-                  const other = rate.otherCost;
+                  const shipping = picked.shipmentCost;
+                  const other = picked.otherCost;
                   const total = shipping + other;
                   return (
-                    <div className="border border-slate-300 bg-slate-50 rounded px-3 py-2 text-sm relative">
-                      {rateLoading && (
-                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gr-green-dark/40 animate-pulse rounded-t" />
-                      )}
+                    <div className="border border-slate-300 bg-slate-50 rounded px-3 py-2 text-sm">
                       <div className="flex items-baseline justify-between text-xs text-gray-500 uppercase tracking-wider mb-1">
                         <span>Total to be billed</span>
                         <span className="text-[10px] font-normal normal-case tracking-normal">
-                          {(pickedCarrier ?? "").toUpperCase()} · {rate.serviceName || pickedService}
-                          {rate.transitDays !== null && (
+                          {(pickedCarrier ?? "").toUpperCase()} · {picked.serviceName || pickedService}
+                          {picked.transitDays !== null && (
                             <span className="ml-2 text-gray-400">
-                              {rate.transitDaysEstimated ? "~" : ""}{rate.transitDays}d transit
+                              {picked.transitDaysEstimated ? "~" : ""}{picked.transitDays}d transit
                             </span>
                           )}
                         </span>
