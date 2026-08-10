@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { LoaderArgs } from "@remix-run/node";
 import { useLoaderData, Link } from "@remix-run/react";
 import { json } from "@remix-run/node";
@@ -403,6 +403,11 @@ export default function PendingShipmentsWork() {
     serviceCode: string | null;
     labelDataUrl: string | null;
   } | null>(null);
+  // Ref to the label-preview iframe on the success card. Its onLoad
+  // handler auto-fires contentWindow.print() inside the modal's own
+  // user-gesture chain — more reliable than Chrome's popup-blocker-
+  // wary auto-print on a new tab.
+  const labelIframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const openPicker = (row: WorkRow) => {
     setPickerRow(row);
@@ -688,21 +693,18 @@ export default function PendingShipmentsWork() {
         const blob = new Blob([bytes], { type: "application/pdf" });
         labelDataUrl = URL.createObjectURL(blob);
 
-        // Auto-open the PDF in a new tab and fire the browser's print
-        // dialog on load. Needed because the shop-floor printer is a
-        // DYMO (not a ZPL Zebra), so we can't push labels directly via
-        // our printer-api — and ShipStation Connect's AutoPrint only
-        // fires on labels created through their UI, not the API. The
-        // shipper's browser + OS default printer become the delivery
-        // path. Pop-up blocker will eat the new tab silently — the
-        // fallback "Open label PDF" link on the success card is the
-        // recovery hatch.
-        const printWin = window.open(labelDataUrl, "_blank");
-        if (printWin) {
-          printWin.addEventListener("load", () => {
-            try { printWin.print(); } catch { /* cross-origin / blocked */ }
-          });
-        }
+        // Was previously window.open() + printWin.print() — but
+        // modern Chrome throttles auto-triggered print() on newly-
+        // opened tabs (needs a fresh user gesture in the target tab
+        // to actually fire the dialog). Result: shipper still had to
+        // manually click Print in the new tab.
+        //
+        // Instead we embed the PDF in a hidden iframe on the success
+        // card JSX below. The iframe lives inside the modal's own
+        // user-gesture chain, so calling iframe.contentWindow.print()
+        // on its load event actually fires the dialog. See the
+        // ref-driven auto-print effect + manual "Print again" button
+        // on the success card for the plumbing.
       }
       setPrintResult({
         trackingNumber: data.trackingNumber ?? null,
@@ -953,11 +955,11 @@ export default function PendingShipmentsWork() {
               <div className="px-4 py-4">
                 <div className="border border-emerald-300 bg-emerald-50 rounded px-3 py-3 mb-3">
                   <div className="text-emerald-900 font-bold text-sm mb-1">
-                    ✓ Label created — printing on paired machine
+                    ✓ Label created — sending to printer
                   </div>
                   <div className="text-emerald-800 text-xs">
-                    Your browser opened the label PDF in a new tab and triggered the print dialog —
-                    send it to the DYMO. If the pop-up was blocked, use the fallback link below.
+                    The print dialog should have popped up automatically. If not, use the
+                    <strong> Print label</strong> button below. Send it to the DYMO.
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-y-1 text-sm mb-3">
@@ -974,16 +976,48 @@ export default function PendingShipmentsWork() {
                     {(printResult.carrierCode ?? "—").toUpperCase()} · {printResult.serviceCode ?? "—"}
                   </div>
                 </div>
+
+                {/* Hidden-ish PDF iframe. Its onLoad handler fires
+                    contentWindow.print() inside the modal's own
+                    user-gesture chain — more reliable than the old
+                    window.open() approach that Chrome throttles. The
+                    button below triggers it manually if the auto-print
+                    didn't fire (some browsers still block it) and for
+                    re-print. Kept visible-but-small so shippers can
+                    see the label actually rendered — helps debug
+                    "did anything print?" moments. */}
+                {printResult.labelDataUrl && (
+                  <>
+                    <iframe
+                      ref={labelIframeRef}
+                      src={printResult.labelDataUrl}
+                      title="Shipping label"
+                      onLoad={() => {
+                        try {
+                          labelIframeRef.current?.contentWindow?.print();
+                        } catch {
+                          /* browser blocked / cross-origin — user can hit the button */
+                        }
+                      }}
+                      className="w-full h-40 border border-slate-300 rounded mb-3"
+                    />
+                  </>
+                )}
+
                 <div className="flex items-center justify-between gap-2">
                   {printResult.labelDataUrl ? (
-                    <a
-                      href={printResult.labelDataUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-gray-600 underline hover:text-gr-black"
+                    <button
+                      onClick={() => {
+                        try {
+                          labelIframeRef.current?.contentWindow?.print();
+                        } catch {
+                          window.open(printResult.labelDataUrl!, "_blank");
+                        }
+                      }}
+                      className="px-3 py-2 rounded border border-gr-green-dark text-gr-green-dark text-sm font-bold hover:bg-gr-mint-100"
                     >
-                      Open label PDF (fallback)
-                    </a>
+                      Print label
+                    </button>
                   ) : <span />}
                   <button
                     onClick={closePrintResult}
