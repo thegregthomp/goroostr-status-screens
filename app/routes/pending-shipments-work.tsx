@@ -55,6 +55,7 @@ type PendingShipment = {
   serviceCode?: string;
   carrierCode?: string;
   packageCode?: string;
+  confirmation?: string;
   weight?: { value?: number; units?: string };
   internalNotes?: string | null;
   advancedOptions?: {
@@ -348,6 +349,9 @@ export default function PendingShipmentsWork() {
   const [dimW, setDimW] = useState<string>("");
   const [dimH, setDimH] = useState<string>("");
   const [residential, setResidential] = useState<boolean>(true);
+  // Signature/confirmation level. ShipStation values:
+  //   none | delivery | signature | adult_signature | direct_signature
+  const [confirmation, setConfirmation] = useState<string>("none");
   const [insuranceAmount, setInsuranceAmount] = useState<string>("");
   const [rates, setRates] = useState<Array<{
     carrierCode: string;
@@ -396,6 +400,7 @@ export default function PendingShipmentsWork() {
     setDimW("");
     setDimH("");
     setResidential(row.order.shipTo?.residential ?? true);
+    setConfirmation(row.order.confirmation ?? "none");
     // Insurance top-up defaults to (orderTotal - 10000) if that's positive.
     // External policy covers first $10k, so we only need supplemental
     // ShipStation coverage on the difference. Whole dollars.
@@ -424,6 +429,7 @@ export default function PendingShipmentsWork() {
     setDimW("");
     setDimH("");
     setInsuranceAmount("");
+    setConfirmation("none");
     setRates([]);
     setRatesLoading(false);
     setRatesError(null);
@@ -450,6 +456,7 @@ export default function PendingShipmentsWork() {
         const dims = (dimL && dimW && dimH)
           ? { length: Number(dimL), width: Number(dimW), height: Number(dimH) }
           : undefined;
+        const insurance = Number(insuranceAmount) || 0;
         const resp = await fetch(`${apiEndpoint}/shipping/rates`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -459,6 +466,7 @@ export default function PendingShipmentsWork() {
             packageCode,
             residential,
             ...(dims ? { dimensions: dims } : {}),
+            ...(insurance > 0 ? { insuranceAmount: insurance } : {}),
           }),
           signal: controller.signal,
         });
@@ -478,7 +486,7 @@ export default function PendingShipmentsWork() {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH]);
+  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount]);
 
   // Fetch packages for the currently-picked carrier so the package
   // dropdown offers the right options (Fedex has "fedex_one_rate_*",
@@ -571,6 +579,7 @@ export default function PendingShipmentsWork() {
           ...(pickedService ? { serviceCode: pickedService } : {}),
           packageCode,
           residential,
+          confirmation,
           ...(dims ? { dimensions: dims } : {}),
           ...(insurance > 0 ? { insuranceAmount: insurance } : {}),
         }),
@@ -984,6 +993,26 @@ export default function PendingShipmentsWork() {
                   </div>
                 </div>
 
+                {/* Signature / confirmation dropdown — Adam's ask.
+                    Matches ShipStation's fixed values. Persists to the
+                    order via `confirmation` on the print-label payload. */}
+                <div>
+                  <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+                    Signature
+                  </label>
+                  <select
+                    value={confirmation}
+                    onChange={(e) => setConfirmation(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                  >
+                    <option value="none">None</option>
+                    <option value="delivery">Delivery Confirmation</option>
+                    <option value="signature">Signature Required</option>
+                    <option value="adult_signature">Adult Signature Required</option>
+                    <option value="direct_signature">Direct Signature Required (FedEx)</option>
+                  </select>
+                </div>
+
                 {/* Weight + dimensions row. */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -1162,6 +1191,52 @@ export default function PendingShipmentsWork() {
                     />
                   </div>
                 )}
+
+                {/* Total-cost breakdown. When a rate is picked, show
+                    what you'll actually be billed — shipping alone,
+                    or shipping + insurance if a top-up is set.
+                    ShipStation's `otherCost` on the rate row includes
+                    the Shipsurance premium (we passed insurance into
+                    /getrates), so it's the real number, not an
+                    estimate. */}
+                {(() => {
+                  const picked = rates.find(
+                    (r) => r.carrierCode === pickedCarrier && r.serviceCode === pickedService
+                  );
+                  if (!picked) return null;
+                  const insurance = Number(insuranceAmount) || 0;
+                  const shipping = picked.shipmentCost;
+                  const other = picked.otherCost;
+                  const total = shipping + other;
+                  return (
+                    <div className="border border-slate-300 bg-slate-50 rounded px-3 py-2 text-sm">
+                      <div className="flex items-baseline justify-between text-xs text-gray-500 uppercase tracking-wider mb-1">
+                        <span>Total to be billed</span>
+                        <span className="text-[10px] font-normal normal-case tracking-normal">
+                          {picked.carrierCode.toUpperCase()} · {picked.serviceName || picked.serviceCode}
+                        </span>
+                      </div>
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-gray-600">Shipping</span>
+                        <span className="font-mono text-gr-black">${shipping.toFixed(2)}</span>
+                      </div>
+                      {other > 0 && (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-gray-600">
+                            {insurance > 0
+                              ? `Insurance (Shipsurance, $${insurance.toLocaleString()})`
+                              : "Other (confirmation/handling)"}
+                          </span>
+                          <span className="font-mono text-gr-black">${other.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="flex items-baseline justify-between mt-1 pt-1 border-t border-slate-300">
+                        <span className="font-bold text-gr-black">Total</span>
+                        <span className="font-mono font-bold text-lg text-gr-green-dark">${total.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Billing warning + fire. */}
                 <div className="border border-amber-300 bg-amber-50 rounded px-3 py-2 text-xs text-amber-900">
