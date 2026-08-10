@@ -969,27 +969,58 @@ export default function PendingShipmentsWork() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
-                      Delivery type
-                    </label>
-                    <div className="flex items-center gap-3 pt-1">
-                      <label className="text-sm flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          checked={residential}
-                          onChange={() => setResidential(true)}
-                        />
-                        Residential
-                      </label>
-                      <label className="text-sm flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          checked={!residential}
-                          onChange={() => setResidential(false)}
-                        />
-                        Commercial
-                      </label>
-                    </div>
+                    {(() => {
+                      // ShipStation-determined value (from their address
+                      // validation on order import). Kept as the pill /
+                      // hint so the shipper knows what ShipStation
+                      // classified — plus the override toggle for the
+                      // rare "we know better" case (e.g., a business
+                      // address that ShipStation flagged as residential).
+                      const shipStationSays = pickerRow.order.shipTo?.residential;
+                      const isOverridden = shipStationSays !== undefined && shipStationSays !== residential;
+                      return (
+                        <>
+                          <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                            Delivery type
+                            {shipStationSays !== undefined && (
+                              <span
+                                className={`normal-case tracking-normal text-[10px] font-normal px-1.5 py-0.5 rounded ${
+                                  shipStationSays
+                                    ? "bg-blue-100 text-blue-800 border border-blue-300"
+                                    : "bg-amber-100 text-amber-800 border border-amber-300"
+                                }`}
+                                title="ShipStation's address-validation classification"
+                              >
+                                ShipStation: {shipStationSays ? "Residential" : "Commercial"}
+                              </span>
+                            )}
+                            {isOverridden && (
+                              <span className="normal-case tracking-normal text-[10px] font-bold text-red-700">
+                                overridden
+                              </span>
+                            )}
+                          </label>
+                          <div className="flex items-center gap-3 pt-1">
+                            <label className="text-sm flex items-center gap-1 cursor-pointer">
+                              <input
+                                type="radio"
+                                checked={residential}
+                                onChange={() => setResidential(true)}
+                              />
+                              Residential
+                            </label>
+                            <label className="text-sm flex items-center gap-1 cursor-pointer">
+                              <input
+                                type="radio"
+                                checked={!residential}
+                                onChange={() => setResidential(false)}
+                              />
+                              Commercial
+                            </label>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
