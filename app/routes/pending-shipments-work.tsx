@@ -400,7 +400,11 @@ export default function PendingShipmentsWork() {
     setDimW("");
     setDimH("");
     setResidential(row.order.shipTo?.residential ?? true);
-    setConfirmation(row.order.confirmation ?? "none");
+    // Signature defaults to none regardless of what the order was
+    // imported with. Shop policy is no-signature by default — even if
+    // BackMarket/eBay's automation stamped a signature requirement on
+    // the order, the shipper should have to explicitly opt in.
+    setConfirmation("none");
     // Insurance top-up defaults to (orderTotal - 10000) if that's positive.
     // External policy covers first $10k, so we only need supplemental
     // ShipStation coverage on the difference. Whole dollars.
