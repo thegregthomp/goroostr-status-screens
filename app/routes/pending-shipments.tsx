@@ -109,13 +109,23 @@ function ageBadgeClass(hours: number): string {
   return "bg-gr-mint-100 text-gr-black border-gr-black";
 }
 
-function isPost2pmToday(iso?: string): boolean {
+/**
+ * Ship cutoff logic. Orders placed AFTER the daily 2:45 PM cutoff
+ * don't need to ship today — they get the "Next-day OK" badge in the
+ * cards. Was buggy previously: threshold used 2:00 PM but the sidebar
+ * countdown ends at 2:45 PM, so orders in the 2:00–2:45 window were
+ * incorrectly badged as next-day even though they still had to ship.
+ * Fixed to match the actual cutoff (2:45 PM ET).
+ */
+function isAfterCutoffToday(iso?: string): boolean {
   if (!iso) return false;
   const then = DateTime.fromISO(iso).setZone("America/New_York");
   if (!then.isValid) return false;
   const nowLocal = DateTime.now().setZone("America/New_York");
   const sameDay = then.hasSame(nowLocal, "day");
-  return sameDay && then.hour >= 14;
+  if (!sameDay) return false;
+  // After 14:45 = after 2:45 PM.
+  return then.hour > 14 || (then.hour === 14 && then.minute >= 45);
 }
 
 /**
@@ -309,7 +319,7 @@ function flattenToCards(shipments: PendingShipment[]): CardEntry[] {
 function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
   const o = c.order;
   const hrs = hoursOld(o.orderDate);
-  const post2pm = isPost2pmToday(o.orderDate);
+  const post2pm = isAfterCutoffToday(o.orderDate);
   // MarketplaceBadge returns a full JSX pill (custom for eBay/BackMarket,
   // colored-text fallback for the rest).
   const svc = serviceBadge(o);
@@ -821,11 +831,13 @@ export default function PendingShipments() {
             </Link>
           </div>
 
-          {/* 2:45 PM shipping cutoff countdown */}
-          <div className="text-center bg-gr-dark-hover rounded-md py-2 px-1">
-            <div className="text-[9px] text-gr-beige-light uppercase leading-tight">Ships close</div>
-            <div className={`font-black text-lg leading-none mt-1 ${cutoff.className}`}>{cutoff.label}</div>
-            <div className="text-[9px] text-gr-beige-light mt-1">2:45 PM</div>
+          {/* 2:45 PM shipping cutoff countdown — condensed to two
+              tight lines: big remaining time, small "til 2:45" hint.
+              Removes the redundant "SHIPS CLOSE" header from the
+              previous three-line layout. */}
+          <div className="text-center bg-gr-dark-hover rounded-md py-2 px-1" title="Orders received before 2:45 PM ET must ship today">
+            <div className={`font-black text-lg leading-none ${cutoff.className}`}>{cutoff.label}</div>
+            <div className="text-[9px] text-gr-beige-light mt-1 leading-tight">til 2:45 PM</div>
           </div>
 
           <div className="text-xs space-y-2 text-center">

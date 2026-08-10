@@ -101,6 +101,24 @@ function hoursOld(iso?: string): number {
   return DateTime.now().diff(then, "hours").hours;
 }
 
+/**
+ * Ship-cutoff countdown label — 2:45 PM ET daily. Duplicated from
+ * pending-shipments.tsx (each view has its own copy so layouts
+ * evolve independently).
+ */
+function shipCutoffState(now: Date): { label: string; className: string } {
+  const nowLocal = DateTime.fromJSDate(now).setZone("America/New_York");
+  const cutoff = nowLocal.set({ hour: 14, minute: 45, second: 0, millisecond: 0 });
+  if (nowLocal >= cutoff) return { label: "CLOSED", className: "text-red-300" };
+  const diff = cutoff.diff(nowLocal, ["hours", "minutes", "seconds"]).toObject();
+  const h = Math.floor(diff.hours ?? 0);
+  const m = Math.floor(diff.minutes ?? 0);
+  const s = Math.floor(diff.seconds ?? 0);
+  const urgent = h * 60 + m < 30;
+  const label = h > 0 ? `${h}h ${m}m` : `${m}m ${s.toString().padStart(2, "0")}s`;
+  return { label, className: urgent ? "text-red-300 animate-pulse" : "text-white" };
+}
+
 function ageBadgeClass(hours: number): string {
   if (hours >= 72) return "bg-red-100 text-red-800 border-red-300";
   if (hours >= 48) return "bg-orange-100 text-orange-800 border-orange-300";
@@ -1452,6 +1470,16 @@ export default function PendingShipmentsWork() {
               </svg>
             </div>
           </div>
+
+          {(() => {
+            const cutoff = shipCutoffState(currentTime);
+            return (
+              <div className="text-center bg-gr-dark-hover rounded-md py-2 px-1" title="Orders received before 2:45 PM ET must ship today">
+                <div className={`font-black text-lg leading-none ${cutoff.className}`}>{cutoff.label}</div>
+                <div className="text-[9px] text-gr-beige-light mt-1 leading-tight">til 2:45 PM</div>
+              </div>
+            );
+          })()}
 
           <div className="text-xs space-y-2 text-center">
             <div>

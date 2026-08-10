@@ -22,6 +22,24 @@ export async function loader({ request }: LoaderArgs) {
   });
 }
 
+/**
+ * Ship-cutoff countdown label. Same 2:45 PM ET cutoff as the
+ * pending-shipments wall — duplicated here (rather than shared)
+ * so this view can update its layout independently.
+ */
+function shipCutoffState(now: Date): { label: string; className: string } {
+  const nowLocal = DateTime.fromJSDate(now).setZone("America/New_York");
+  const cutoff = nowLocal.set({ hour: 14, minute: 45, second: 0, millisecond: 0 });
+  if (nowLocal >= cutoff) return { label: "CLOSED", className: "text-red-300" };
+  const diff = cutoff.diff(nowLocal, ["hours", "minutes", "seconds"]).toObject();
+  const h = Math.floor(diff.hours ?? 0);
+  const m = Math.floor(diff.minutes ?? 0);
+  const s = Math.floor(diff.seconds ?? 0);
+  const urgent = h * 60 + m < 30;
+  const label = h > 0 ? `${h}h ${m}m` : `${m}m ${s.toString().padStart(2, "0")}s`;
+  return { label, className: urgent ? "text-red-300 animate-pulse" : "text-white" };
+}
+
 export default function ListView() {
   const { data, custom, status_options, apiEndpoint } = useLoaderData();
   const [orders, setOrders] = useState([...data, ...custom]);
@@ -1099,6 +1117,16 @@ export default function ListView() {
               </svg>
             </Link>
           </div>
+
+          {(() => {
+            const cutoff = shipCutoffState(currentTime);
+            return (
+              <div className="text-center bg-gr-dark-hover rounded-md py-2 px-1" title="Orders received before 2:45 PM ET must ship today">
+                <div className={`font-black text-lg leading-none ${cutoff.className}`}>{cutoff.label}</div>
+                <div className="text-[9px] text-gr-beige-light mt-1 leading-tight">til 2:45 PM</div>
+              </div>
+            );
+          })()}
 
           <div className="text-xs space-y-2 text-center">
             <div>
