@@ -319,6 +319,10 @@ export default function PendingShipmentsWork() {
   const [pickerRow, setPickerRow] = useState<WorkRow | null>(null);
   const [picks, setPicks] = useState<Record<number, InventoryMatch>>({});
   const [confirmMode, setConfirmMode] = useState(false);
+  // Weight input is TWO fields (lb + oz) because that's how the shop
+  // scale reads out ("4 lb 12 oz"). We combine into total ounces on
+  // submit — the backend + ShipStation stay ounce-based.
+  const [weightLb, setWeightLb] = useState<string>("");
   const [weightOz, setWeightOz] = useState<string>("");
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
@@ -335,11 +339,20 @@ export default function PendingShipmentsWork() {
     setPicks({});
     setConfirmMode(false);
     setPrintError(null);
-    // Default the weight input to whatever ShipStation has on the
-    // order (usually populated by automation rules on import). Blank
-    // string if unknown — shipper must fill it in before we submit.
-    const w = row.order.weight?.value;
-    setWeightOz(w && w > 0 ? String(w) : "");
+    // Default weight from what ShipStation has on the order (usually
+    // populated by automation rules on import). Split whole ounces
+    // into lb + oz so both inputs show the split the scale would.
+    const totalOz = row.order.weight?.value;
+    if (totalOz && totalOz > 0) {
+      const lb = Math.floor(totalOz / 16);
+      const oz = totalOz - lb * 16;
+      setWeightLb(lb > 0 ? String(lb) : "");
+      // Preserve fractional oz when present, otherwise show the whole number.
+      setWeightOz(Number.isInteger(oz) ? String(oz) : String(oz));
+    } else {
+      setWeightLb("");
+      setWeightOz("");
+    }
   };
 
   const closePicker = () => {
@@ -347,6 +360,7 @@ export default function PendingShipmentsWork() {
     setPicks({});
     setConfirmMode(false);
     setPrintError(null);
+    setWeightLb("");
     setWeightOz("");
   };
 
@@ -373,6 +387,14 @@ export default function PendingShipmentsWork() {
     setPrintError(null);
   };
 
+  // Combine the lb + oz fields into total ounces for the API. Falls
+  // back to 0 for empty/NaN parts so "4lb" alone works ("0oz").
+  const totalOunces = (): number => {
+    const lb = Number(weightLb) || 0;
+    const oz = Number(weightOz) || 0;
+    return lb * 16 + oz;
+  };
+
   const firePrint = async () => {
     if (!pickerRow) return;
     const inventoryIds = pickerRow.items.map((_, i) => picks[i]?.id).filter(Boolean) as number[];
@@ -380,9 +402,9 @@ export default function PendingShipmentsWork() {
       setPrintError("One or more items don't have an inventory pick.");
       return;
     }
-    const w = Number(weightOz);
-    if (!weightOz || Number.isNaN(w) || w <= 0) {
-      setPrintError("Enter a weight in ounces before printing.");
+    const w = totalOunces();
+    if (w <= 0) {
+      setPrintError("Enter a weight (lb and/or oz) before printing.");
       return;
     }
     setPrinting(true);
@@ -408,6 +430,22 @@ export default function PendingShipmentsWork() {
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const blob = new Blob([bytes], { type: "application/pdf" });
         labelDataUrl = URL.createObjectURL(blob);
+
+        // Auto-open the PDF in a new tab and fire the browser's print
+        // dialog on load. Needed because the shop-floor printer is a
+        // DYMO (not a ZPL Zebra), so we can't push labels directly via
+        // our printer-api — and ShipStation Connect's AutoPrint only
+        // fires on labels created through their UI, not the API. The
+        // shipper's browser + OS default printer become the delivery
+        // path. Pop-up blocker will eat the new tab silently — the
+        // fallback "Open label PDF" link on the success card is the
+        // recovery hatch.
+        const printWin = window.open(labelDataUrl, "_blank");
+        if (printWin) {
+          printWin.addEventListener("load", () => {
+            try { printWin.print(); } catch { /* cross-origin / blocked */ }
+          });
+        }
       }
       setPrintResult({
         trackingNumber: data.trackingNumber ?? null,
@@ -664,8 +702,8 @@ export default function PendingShipmentsWork() {
                     ✓ Label created — printing on paired machine
                   </div>
                   <div className="text-emerald-800 text-xs">
-                    ShipStation Connect's AutoPrint will send this to the label printer wired to
-                    the paired workstation. If it doesn't come out, use the fallback link below.
+                    Your browser opened the label PDF in a new tab and triggered the print dialog —
+                    send it to the DYMO. If the pop-up was blocked, use the fallback link below.
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-y-1 text-sm mb-3">
@@ -740,29 +778,41 @@ export default function PendingShipmentsWork() {
                 </div>
                 <div className="mb-3">
                   <label className="text-xs text-gray-500 uppercase tracking-wider block mb-1">
-                    Weight (oz)
+                    Weight
                     <span className="ml-2 normal-case tracking-normal text-[10px] text-gray-400">
-                      pre-filled from order — verify or override (whole-box weight for multi-item)
+                      pre-filled from order — enter what the scale reads (whole-box weight for multi-item)
                     </span>
                   </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    value={weightOz}
-                    onChange={(e) => setWeightOz(e.target.value)}
-                    className="w-32 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
-                    autoFocus
-                  />
-                  <span className="ml-2 text-xs text-gray-500">
-                    {weightOz && !Number.isNaN(Number(weightOz))
-                      ? `≈ ${(Number(weightOz) / 16).toFixed(2)} lb`
-                      : ""}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={weightLb}
+                      onChange={(e) => setWeightLb(e.target.value)}
+                      className="w-20 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                      autoFocus
+                    />
+                    <span className="text-sm text-gray-600">lb</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="15.9"
+                      value={weightOz}
+                      onChange={(e) => setWeightOz(e.target.value)}
+                      className="w-20 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                    />
+                    <span className="text-sm text-gray-600">oz</span>
+                    <span className="ml-2 text-xs text-gray-500">
+                      {totalOunces() > 0 ? `= ${totalOunces()} oz total` : ""}
+                    </span>
+                  </div>
                 </div>
                 <div className="border border-amber-300 bg-amber-50 rounded px-3 py-2 text-xs text-amber-900 mb-3">
-                  <strong>Postage will be billed</strong> the moment you click Print. Label goes
-                  to the paired machine's printer via ShipStation Connect AutoPrint.
+                  <strong>Postage will be billed</strong> the moment you click Print. The label PDF
+                  opens in a new tab and auto-triggers your browser's print dialog — send it to the
+                  DYMO to get the physical label.
                 </div>
                 {printError && (
                   <div className="border border-red-400 bg-red-50 rounded px-3 py-2 text-sm text-red-800 mb-3">

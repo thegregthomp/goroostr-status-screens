@@ -16,7 +16,16 @@ import {
 import tailwindStylesheetUrl from "./styles/tailwind.css";
 
 export const meta: MetaFunction = () => {
-  return { title: "GoRoostr — Order Status" };
+  return {
+    title: "GoRoostr — Order Status",
+    // Force light mode across every route. Wall TV browsers respecting
+    // OS dark-mode were auto-inverting scrollbars, form chrome, and
+    // default backgrounds against our light-palette design. Per-route
+    // meta wasn't reliably picked up on all screens; setting this at
+    // root plus the html/body inline color-scheme below covers both.
+    "color-scheme": "light",
+    "theme-color": "#ffffff",
+  };
 };
 
 export const links: LinksFunction = () => {
@@ -42,14 +51,27 @@ export async function loader({ request }: LoaderArgs) {
 
 export default function App() {
   return (
-    <html lang="en" className="h-full">
+    <html lang="en" className="h-full" style={{ colorScheme: "light" }}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <Meta />
         <Links />
+        {/* Belt-and-suspenders light-mode lock at the document level so
+            every route inherits it without needing its own per-route
+            stamp. Per-route locks were missing on some screens (form
+            chrome, scrollbars) because the meta tag alone is a hint —
+            the html/body element must actually carry color-scheme:light
+            for browsers to stop auto-inverting UA defaults. */}
+        <style dangerouslySetInnerHTML={{ __html: `
+          html, body {
+            color-scheme: light !important;
+            background-color: #ffffff !important;
+            color: #111827 !important;
+          }
+        ` }} />
       </head>
-      <body className="h-full font-sans text-gr-black bg-white">
+      <body className="h-full font-sans text-gr-black bg-white" style={{ colorScheme: "light" }}>
         <Outlet />
         <ScrollRestoration />
         <Scripts />
