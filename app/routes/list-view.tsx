@@ -1076,6 +1076,28 @@ export default function ListView() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
               </svg>
             </div>
+            {/* Shipping wall — 40" TV read-only view of Pending +
+                Shipped Today. Package/box icon. */}
+            <Link
+              to="/pending-shipments"
+              className="block p-2 mt-1 text-gr-beige-light hover:text-white hover:bg-gr-dark-hover rounded transition-colors"
+              title="Shipping Wall — Pending + Shipped Today"
+            >
+              <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8l1-4h12l1 4M5 8v11a1 1 0 001 1h12a1 1 0 001-1V8M10 12h4" />
+              </svg>
+            </Link>
+            {/* Shipping Work — interactive companion where shippers
+                pick, confirm, print labels. Check-in-circle icon. */}
+            <Link
+              to="/pending-shipments-work"
+              className="block p-2 mt-1 text-gr-beige-light hover:text-white hover:bg-gr-dark-hover rounded transition-colors"
+              title="Shipping Work — pick, confirm, print"
+            >
+              <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </Link>
           </div>
 
           <div className="text-xs space-y-2 text-center">
