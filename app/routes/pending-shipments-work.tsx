@@ -419,6 +419,11 @@ export default function PendingShipmentsWork() {
   const [matchedRules, setMatchedRules] = useState<Array<{
     id: number; name: string; priority: number;
   }>>([]);
+  // Weight-from-history — when the picked SKUs have enough past
+  // shipments in sku_weight_averages, we pre-fill the lb/oz inputs
+  // with the summed median. This tag drives the "auto-filled" badge
+  // in the weight field.
+  const [weightHistorySamples, setWeightHistorySamples] = useState<number>(0);
   // Dropdown-per-service UX (2026-08-10 redesign, replacing the full
   // rate table): shipper picks a carrier, then a service, and we
   // fetch a SINGLE rate for that specific pair. Much faster than the
@@ -532,6 +537,7 @@ export default function PendingShipmentsWork() {
     setInsuranceEnabled(false);
     setConfirmation("none");
     setMatchedRules([]);
+    setWeightHistorySamples(0);
     setRates([]);
     setRatesLoading(false);
     setRatesError(null);
@@ -637,6 +643,50 @@ export default function PendingShipmentsWork() {
       }
     })();
     return () => { cancelled = true; };
+  }, [apiEndpoint, pickerRow, confirmMode]);
+
+  // Weight-from-history — when confirm mode opens, look up each
+  // picked SKU's median weight in sku_weight_averages and pre-fill
+  // the lb/oz inputs with the summed total. Only fires if all SKUs
+  // have "trusted" data (>= MIN_TRUSTED_SAMPLES) so we don't propagate
+  // a single-sample outlier. Overwrites whatever the order's own
+  // marketplace weight was — SKU-history median is more accurate.
+  useEffect(() => {
+    if (!pickerRow || !confirmMode) return;
+    const skus = pickerRow.items
+      .map((it) => it.sku)
+      .filter(Boolean)
+      .join(",");
+    if (!skus) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(
+          `${apiEndpoint}/shipping/sku-weights?skus=${encodeURIComponent(skus)}`
+        );
+        const data = await resp.json();
+        if (cancelled) return;
+        const totalOz = Number(data.totalOz) || 0;
+        if (totalOz > 0) {
+          const lb = Math.floor(totalOz / 16);
+          const oz = Math.round((totalOz - lb * 16) * 100) / 100;
+          setWeightLb(lb > 0 ? String(lb) : "");
+          setWeightOz(oz > 0 ? String(oz) : "");
+          // Sum sample counts across the picked SKUs for the badge —
+          // more samples = more confidence.
+          const samples = Object.values(data.weights ?? {}).reduce(
+            (acc: number, w: any) => acc + (w?.sample_count ?? 0),
+            0
+          ) as number;
+          setWeightHistorySamples(samples);
+        }
+      } catch {
+        /* non-fatal — falls back to order's default weight */
+      }
+    })();
+    return () => { cancelled = true; };
+    // Re-runs when picks change (items[] changes shape only if the
+    // shipper re-picks, which happens back in Stage 1 not confirm).
   }, [apiEndpoint, pickerRow, confirmMode]);
 
   // Fetch the account's configured carriers when confirm-mode opens.
@@ -1462,8 +1512,16 @@ export default function PendingShipmentsWork() {
                 {/* Weight + dimensions row. */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+                    <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2">
                       Weight (lb / oz)
+                      {weightHistorySamples > 0 && (
+                        <span
+                          className="normal-case tracking-normal text-[10px] font-normal px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300"
+                          title={`Pre-filled from ${weightHistorySamples} past shipments of these SKUs. Verify on the scale — override if different.`}
+                        >
+                          ✓ auto-filled from {weightHistorySamples} past ships
+                        </span>
+                      )}
                     </label>
                     <div className="flex items-center gap-1">
                       <input
