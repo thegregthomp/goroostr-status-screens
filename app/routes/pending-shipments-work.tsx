@@ -228,7 +228,15 @@ export default function PendingShipmentsWork() {
   const initial = useLoaderData<typeof loader>();
   const [shipments, setShipments] = useState<PendingShipment[]>(initial.shipments ?? []);
   const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Wall-clock ticker powers the sidebar's current time display.
+  // 1s cadence matches the other views' sidebars for consistency.
+  useEffect(() => {
+    const t = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
   const [loadError, setLoadError] = useState<string | null>(initial.error ?? null);
   const [query, setQuery] = useState("");
   const apiEndpoint = initial.apiEndpoint;
@@ -652,7 +660,7 @@ export default function PendingShipmentsWork() {
         }
       ` }} />
 
-      <div className="max-w-[1600px] mx-auto p-4">
+      <div className="max-w-[1600px] mx-auto p-4 pr-24">
         {/* Header */}
         <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-baseline gap-3">
@@ -663,9 +671,6 @@ export default function PendingShipmentsWork() {
             </span>
           </div>
           <div className="flex items-center gap-3 text-xs text-gray-600">
-            <Link to="/pending-shipments" className="underline hover:text-gr-green-dark">
-              Open wall view →
-            </Link>
             <span>
               Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               {isRefreshing && " · refreshing…"}
@@ -1173,6 +1178,90 @@ export default function PendingShipmentsWork() {
           </div>
         </div>
       )}
+
+      {/* Right-side sidebar — matches the wall/dashboard/list-view
+          sidebars so the four screens look like one app. Cross-nav +
+          live status + wall-clock. Position:fixed so it stays put
+          when the picker modal opens. z-40 sits below the modal's
+          z-50 overlay. */}
+      <div className="fixed right-0 top-0 bottom-0 w-20 bg-gr-green-dark flex flex-col justify-between p-2 text-white z-40">
+        <div className="space-y-2">
+          <div className="flex justify-center pt-1 pb-3">
+            <div className="bg-gr-beige-light rounded-md px-2 py-1.5 flex items-center justify-center">
+              <img src="/GR_Logo1B.svg" alt="GoRoostr" className="h-5" />
+            </div>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-green-400" />
+              {isRefreshing && (
+                <svg className="w-2 h-2 animate-spin text-white" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              )}
+            </div>
+            <span className="text-xs font-semibold text-gr-green">LIVE</span>
+          </div>
+
+          <div className="py-4 border-t border-b border-gr-dark-hover">
+            <Link
+              to="/"
+              className="block p-2 text-gr-beige-light hover:text-white hover:bg-gr-dark-hover rounded transition-colors"
+              title="Dashboard View"
+            >
+              <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+              </svg>
+            </Link>
+            <Link
+              to="/list-view"
+              className="block p-2 mt-1 text-gr-beige-light hover:text-white hover:bg-gr-dark-hover rounded transition-colors"
+              title="List View"
+            >
+              <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+              </svg>
+            </Link>
+            <Link
+              to="/pending-shipments"
+              className="block p-2 mt-1 text-gr-beige-light hover:text-white hover:bg-gr-dark-hover rounded transition-colors"
+              title="Shipping Wall — Pending + Shipped Today"
+            >
+              <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8l1-4h12l1 4M5 8v11a1 1 0 001 1h12a1 1 0 001-1V8M10 12h4" />
+              </svg>
+            </Link>
+            <div className="p-2 mt-1 text-white bg-gr-dark-hover rounded" title="Shipping Work (Current)">
+              <svg className="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+          </div>
+
+          <div className="text-xs space-y-2 text-center">
+            <div>
+              <div className="text-gr-beige-light text-xs">Updated</div>
+              <div className="font-semibold text-xs">
+                {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </div>
+            </div>
+            <div>
+              <div className="text-gr-beige-light text-xs">Orders</div>
+              <div className="font-bold text-sm">{sorted.length}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="text-center">
+          <div className="text-lg font-bold">
+            {currentTime
+              .toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })
+              .replace(" AM", "")
+              .replace(" PM", "")}
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
