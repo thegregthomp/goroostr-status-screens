@@ -411,6 +411,14 @@ export default function PendingShipmentsWork() {
   // top-up amount (our external policy covers first $10k, they need
   // ShipStation-side coverage for the difference).
   const [insuranceEnabled, setInsuranceEnabled] = useState<boolean>(false);
+  // Rules engine — which rules matched this order, for the "auto-
+  // applied" badge in the confirm modal. Fetched from
+  // /api/shipping/recommended-defaults on confirm-mode open, applied
+  // to the confirm-modal state (carrier/service/package/confirmation/
+  // residential/insurance) so shipper sees pre-filled values.
+  const [matchedRules, setMatchedRules] = useState<Array<{
+    id: number; name: string; priority: number;
+  }>>([]);
   // Dropdown-per-service UX (2026-08-10 redesign, replacing the full
   // rate table): shipper picks a carrier, then a service, and we
   // fetch a SINGLE rate for that specific pair. Much faster than the
@@ -523,6 +531,7 @@ export default function PendingShipmentsWork() {
     setInsuranceProvider("carrier");
     setInsuranceEnabled(false);
     setConfirmation("none");
+    setMatchedRules([]);
     setRates([]);
     setRatesLoading(false);
     setRatesError(null);
@@ -592,6 +601,43 @@ export default function PendingShipmentsWork() {
       clearTimeout(t);
     };
   }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, pickedCarrier]);
+
+  // Rules-engine defaults — fetched on confirm-mode open. Every
+  // matching rule's actions get merged into a bundle; we apply each
+  // key to the corresponding confirm-modal state so the shipper
+  // sees rule-picked values without typing. They can still override
+  // any of them by hand — rules just set the initial state.
+  useEffect(() => {
+    if (!pickerRow || !confirmMode || !pickerRow.order.orderId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(
+          `${apiEndpoint}/shipping/recommended-defaults/${pickerRow.order.orderId}`
+        );
+        const data = await resp.json();
+        if (cancelled) return;
+        const defaults = data.defaults ?? {};
+        setMatchedRules(defaults.matchedRules ?? []);
+        // Apply each action key. Only set if the rule provided that
+        // key — a rule that doesn't mention `confirmation` shouldn't
+        // clobber the "None" default.
+        if (typeof defaults.carrier === "string") setPickedCarrier(defaults.carrier);
+        if (typeof defaults.service === "string") setPickedService(defaults.service);
+        if (typeof defaults.package === "string") setPackageCode(defaults.package);
+        if (typeof defaults.confirmation === "string") setConfirmation(defaults.confirmation);
+        if (typeof defaults.residential === "boolean") setResidential(defaults.residential);
+        if (typeof defaults.insurance_provider === "string") setInsuranceProvider(defaults.insurance_provider);
+        if (typeof defaults.insurance_amount === "number" && defaults.insurance_amount > 0) {
+          setInsuranceAmount(String(defaults.insurance_amount));
+          setInsuranceEnabled(true);
+        }
+      } catch {
+        /* non-fatal — confirm modal still works without rule defaults */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [apiEndpoint, pickerRow, confirmMode]);
 
   // Fetch the account's configured carriers when confirm-mode opens.
   useEffect(() => {
@@ -1215,6 +1261,22 @@ export default function PendingShipmentsWork() {
               /* STAGE 2: Confirmation — rate shopping + package
                  config + insurance top-up + fire. */
               <div className="px-4 py-4 space-y-3">
+                {/* "Auto-applied" badge — visible when a shipping_rule
+                    matched this order + set defaults. Tells shipper
+                    the pre-picked carrier/service/signature/etc came
+                    from a rule (not their own selection) and which
+                    rule(s) fired. Managed in Nova → Shipping Rules. */}
+                {matchedRules.length > 0 && (
+                  <div className="border border-emerald-300 bg-emerald-50 rounded px-3 py-1.5 text-xs text-emerald-900 flex items-center gap-2">
+                    <span className="text-emerald-700 font-bold">✓ Auto-applied:</span>
+                    <span>
+                      {matchedRules.map((r) => r.name).join(" · ")}
+                    </span>
+                    <span className="ml-auto text-[10px] text-emerald-700/70">
+                      you can override anything below
+                    </span>
+                  </div>
+                )}
                 {/* Ship-to + inventory summary. Now shows the full
                     address (street1/2/3, not just city/state) so
                     shippers can spot label-breaking addresses BEFORE
