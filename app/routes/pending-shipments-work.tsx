@@ -54,6 +54,7 @@ type PendingShipment = {
   requestedShippingService?: string;
   serviceCode?: string;
   carrierCode?: string;
+  packageCode?: string;
   weight?: { value?: number; units?: string };
   internalNotes?: string | null;
   advancedOptions?: {
@@ -66,6 +67,7 @@ type PendingShipment = {
     city?: string;
     state?: string;
     postalCode?: string;
+    residential?: boolean;
   };
   items?: Array<{
     sku?: string;
@@ -324,6 +326,32 @@ export default function PendingShipmentsWork() {
   // submit — the backend + ShipStation stay ounce-based.
   const [weightLb, setWeightLb] = useState<string>("");
   const [weightOz, setWeightOz] = useState<string>("");
+  // Rate-shopping state — all populated when confirmMode flips on.
+  // packageCode: what BackMarket 2day one-rate box vs plain "package".
+  // dimensions: L×W×H in inches, optional (some carriers need it).
+  // residential: shipTo.residential toggle, defaults from order.
+  // insuranceAmount: supplemental $ above our $10k external policy.
+  // rates: cross-carrier grid populated on load + any change.
+  // pickedCarrier/Service: which row the shipper selected.
+  const [packageCode, setPackageCode] = useState<string>("package");
+  const [packages, setPackages] = useState<Array<{code: string; name: string}>>([]);
+  const [dimL, setDimL] = useState<string>("");
+  const [dimW, setDimW] = useState<string>("");
+  const [dimH, setDimH] = useState<string>("");
+  const [residential, setResidential] = useState<boolean>(true);
+  const [insuranceAmount, setInsuranceAmount] = useState<string>("");
+  const [rates, setRates] = useState<Array<{
+    carrierCode: string;
+    serviceCode: string;
+    serviceName: string;
+    shipmentCost: number;
+    otherCost: number;
+    transitDays: number | null;
+  }>>([]);
+  const [ratesLoading, setRatesLoading] = useState(false);
+  const [ratesError, setRatesError] = useState<string | null>(null);
+  const [pickedCarrier, setPickedCarrier] = useState<string | null>(null);
+  const [pickedService, setPickedService] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printResult, setPrintResult] = useState<{
@@ -353,6 +381,24 @@ export default function PendingShipmentsWork() {
       setWeightLb("");
       setWeightOz("");
     }
+    // Rate-shopping defaults — seeded from the order.
+    setPackageCode(row.order.packageCode ?? "package");
+    setDimL("");
+    setDimW("");
+    setDimH("");
+    setResidential(row.order.shipTo?.residential ?? true);
+    // Insurance top-up defaults to (orderTotal - 10000) if that's positive.
+    // External policy covers first $10k, so we only need supplemental
+    // ShipStation coverage on the difference. Whole dollars.
+    const orderTotal = row.order.orderTotal ?? 0;
+    const topUp = Math.max(0, Math.floor(orderTotal - 10000));
+    setInsuranceAmount(topUp > 0 ? String(topUp) : "");
+    setRates([]);
+    setRatesError(null);
+    // Default the picked rate to whatever the order already has —
+    // so a "just print with existing settings" click is one press.
+    setPickedCarrier(row.order.carrierCode ?? null);
+    setPickedService(row.order.serviceCode ?? row.order.requestedShippingService ?? null);
   };
 
   const closePicker = () => {
@@ -362,7 +408,89 @@ export default function PendingShipmentsWork() {
     setPrintError(null);
     setWeightLb("");
     setWeightOz("");
+    setPackageCode("package");
+    setPackages([]);
+    setDimL("");
+    setDimW("");
+    setDimH("");
+    setInsuranceAmount("");
+    setRates([]);
+    setRatesLoading(false);
+    setRatesError(null);
+    setPickedCarrier(null);
+    setPickedService(null);
   };
+
+  // Rate fetch — fires whenever the shopper changes weight/package/
+  // dims/residential in the confirm modal. Debounced 300ms so typing
+  // in the weight field doesn't spam ShipStation. Also fetches once
+  // on confirm-mode entry.
+  useEffect(() => {
+    if (!pickerRow || !confirmMode) return;
+    const totalOz = (Number(weightLb) || 0) * 16 + (Number(weightOz) || 0);
+    if (totalOz <= 0) {
+      setRates([]);
+      return;
+    }
+    const controller = new AbortController();
+    const t = setTimeout(async () => {
+      setRatesLoading(true);
+      setRatesError(null);
+      try {
+        const dims = (dimL && dimW && dimH)
+          ? { length: Number(dimL), width: Number(dimW), height: Number(dimH) }
+          : undefined;
+        const resp = await fetch(`${apiEndpoint}/shipping/rates`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderId: pickerRow.order.orderId,
+            weightOz: totalOz,
+            packageCode,
+            residential,
+            ...(dims ? { dimensions: dims } : {}),
+          }),
+          signal: controller.signal,
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.success === false) {
+          throw new Error(data.error ?? `HTTP ${resp.status}`);
+        }
+        setRates(data.rates ?? []);
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return;
+        setRatesError((e as Error).message ?? "Rate lookup failed");
+      } finally {
+        setRatesLoading(false);
+      }
+    }, 300);
+    return () => {
+      controller.abort();
+      clearTimeout(t);
+    };
+  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH]);
+
+  // Fetch packages for the currently-picked carrier so the package
+  // dropdown offers the right options (Fedex has "fedex_one_rate_*",
+  // USPS has flat-rate boxes, etc.). Falls back to a bare "package"
+  // if the fetch fails.
+  useEffect(() => {
+    if (!confirmMode || !pickedCarrier) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`${apiEndpoint}/shipping/carriers/${encodeURIComponent(pickedCarrier)}/packages`);
+        const data = await resp.json();
+        if (cancelled) return;
+        if (data.success !== false) {
+          setPackages(data.packages ?? []);
+        }
+      } catch {
+        // Non-fatal — user can still ship with the default "package".
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [apiEndpoint, confirmMode, pickedCarrier]);
 
   const setPickForItem = (itemIndex: number, inv: InventoryMatch) =>
     setPicks((prev) => ({ ...prev, [itemIndex]: inv }));
@@ -410,6 +538,15 @@ export default function PendingShipmentsWork() {
     setPrinting(true);
     setPrintError(null);
     try {
+      // Dimensions only get sent when all three are filled — some
+      // carriers require them, others reject partial dims. Insurance
+      // top-up only when set (we don't want a `0` to disable existing
+      // ShipStation-side insurance if any).
+      const dims = (dimL && dimW && dimH)
+        ? { length: Number(dimL), width: Number(dimW), height: Number(dimH) }
+        : undefined;
+      const insurance = Number(insuranceAmount) || 0;
+
       const resp = await fetch(`${apiEndpoint}/shipping/print-label`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -417,6 +554,12 @@ export default function PendingShipmentsWork() {
           orderId: pickerRow.order.orderId,
           inventoryIds,
           weightOz: w,
+          ...(pickedCarrier ? { carrierCode: pickedCarrier } : {}),
+          ...(pickedService ? { serviceCode: pickedService } : {}),
+          packageCode,
+          residential,
+          ...(dims ? { dimensions: dims } : {}),
+          ...(insurance > 0 ? { insuranceAmount: insurance } : {}),
         }),
       });
       const data = await resp.json();
@@ -666,7 +809,7 @@ export default function PendingShipmentsWork() {
           onClick={printing ? undefined : closePicker}
         >
           <div
-            className="bg-white rounded-lg shadow-2xl border-2 border-gr-black w-full max-w-xl mx-4"
+            className="bg-white rounded-lg shadow-2xl border-2 border-gr-black w-full max-w-2xl mx-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-baseline justify-between px-4 py-3 border-b border-slate-200">
@@ -740,82 +883,237 @@ export default function PendingShipmentsWork() {
                 </div>
               </div>
             ) : confirmMode ? (
-              /* STAGE 2: Confirmation */
-              <div className="px-4 py-4">
-                <div className="mb-3">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider">Ship to</div>
-                  <div className="text-sm text-gr-black">
-                    {pickerRow.order.shipTo?.name ?? "—"}, {pickerRow.order.shipTo?.city ?? "—"},{" "}
-                    <span className="font-bold">{pickerRow.order.shipTo?.state ?? "—"}</span>
+              /* STAGE 2: Confirmation — rate shopping + package
+                 config + insurance top-up + fire. */
+              <div className="px-4 py-4 space-y-3">
+                {/* Ship-to + inventory summary (compact top row). */}
+                <div className="grid grid-cols-2 gap-3 pb-2 border-b border-slate-200">
+                  <div>
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wider">Ship to</div>
+                    <div className="text-sm text-gr-black">
+                      {pickerRow.order.shipTo?.name ?? "—"}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {pickerRow.order.shipTo?.city ?? "—"},{" "}
+                      <span className="font-bold text-gr-black">{pickerRow.order.shipTo?.state ?? "—"}</span>{" "}
+                      {pickerRow.order.shipTo?.postalCode ?? ""}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+                      Inventory ({pickerRow.items.length})
+                    </div>
+                    <div className="text-xs font-mono text-gr-black leading-tight">
+                      {pickerRow.items.map((_, i) => picks[i]?.id).filter(Boolean).join(", ")}
+                    </div>
                   </div>
                 </div>
-                <div className="mb-3">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider">
-                    Inventory unit{pickerRow.items.length > 1 ? "s" : ""}
+
+                {/* Package + Residential row. */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+                      Package type
+                    </label>
+                    <select
+                      value={packageCode}
+                      onChange={(e) => setPackageCode(e.target.value)}
+                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                    >
+                      {/* Always list "package" as the safe default. */}
+                      <option value="package">Package (default)</option>
+                      {packages
+                        .filter((p) => p.code !== "package")
+                        .map((p) => (
+                          <option key={p.code} value={p.code}>
+                            {p.name}
+                          </option>
+                        ))}
+                    </select>
                   </div>
-                  <ul className="text-sm">
-                    {pickerRow.items.map((it, i) => {
-                      const inv = picks[i];
-                      if (!inv) return null;
-                      return (
-                        <li key={i} className="border-b border-slate-100 last:border-b-0 py-1">
-                          <div className="font-mono text-gr-black">
-                            #{inv.id}{" "}
-                            <span className="text-gray-500">· {inv.serial_number ?? "no serial"}</span>
-                          </div>
-                          <div className="text-xs text-gray-500 font-mono">{it.sku ?? "—"}</div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-                <div className="mb-3">
-                  <div className="text-xs text-gray-500 uppercase tracking-wider">Service</div>
-                  <div className="text-sm text-gr-black">
-                    {(pickerRow.order.carrierCode ?? "—").toUpperCase()} ·{" "}
-                    {pickerRow.order.serviceCode ?? pickerRow.order.requestedShippingService ?? "—"}
+                  <div>
+                    <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+                      Delivery type
+                    </label>
+                    <div className="flex items-center gap-3 pt-1">
+                      <label className="text-sm flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={residential}
+                          onChange={() => setResidential(true)}
+                        />
+                        Residential
+                      </label>
+                      <label className="text-sm flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={!residential}
+                          onChange={() => setResidential(false)}
+                        />
+                        Commercial
+                      </label>
+                    </div>
                   </div>
                 </div>
-                <div className="mb-3">
-                  <label className="text-xs text-gray-500 uppercase tracking-wider block mb-1">
-                    Weight
-                    <span className="ml-2 normal-case tracking-normal text-[10px] text-gray-400">
-                      pre-filled from order — enter what the scale reads (whole-box weight for multi-item)
-                    </span>
-                  </label>
-                  <div className="flex items-center gap-2">
+
+                {/* Weight + dimensions row. */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+                      Weight (lb / oz)
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={weightLb}
+                        onChange={(e) => setWeightLb(e.target.value)}
+                        className="w-16 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                        autoFocus
+                      />
+                      <span className="text-xs text-gray-600">lb</span>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="15.9"
+                        value={weightOz}
+                        onChange={(e) => setWeightOz(e.target.value)}
+                        className="w-16 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                      />
+                      <span className="text-xs text-gray-600">oz</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+                      Dimensions L × W × H (in)
+                      <span className="ml-1 normal-case tracking-normal text-[9px] text-gray-400">optional</span>
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={dimL}
+                        onChange={(e) => setDimL(e.target.value)}
+                        placeholder="L"
+                        className="w-14 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                      />
+                      <span className="text-xs text-gray-400">×</span>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={dimW}
+                        onChange={(e) => setDimW(e.target.value)}
+                        placeholder="W"
+                        className="w-14 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                      />
+                      <span className="text-xs text-gray-400">×</span>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={dimH}
+                        onChange={(e) => setDimH(e.target.value)}
+                        placeholder="H"
+                        className="w-14 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Rate-shopping table. */}
+                <div>
+                  <div className="flex items-baseline justify-between mb-1">
+                    <label className="text-[10px] text-gray-500 uppercase tracking-wider">
+                      Available rates {ratesLoading && <span className="ml-2 text-gray-400 normal-case tracking-normal">refreshing…</span>}
+                    </label>
+                    {pickedCarrier && pickedService && (
+                      <span className="text-[10px] text-gr-green-dark uppercase tracking-wider font-bold">
+                        Selected: {pickedCarrier.toUpperCase()} · {pickedService}
+                      </span>
+                    )}
+                  </div>
+                  <div className="border border-slate-200 rounded max-h-56 overflow-y-auto">
+                    {ratesError && (
+                      <div className="text-red-700 bg-red-50 border-b border-red-300 px-3 py-2 text-sm">
+                        {ratesError}
+                      </div>
+                    )}
+                    {!ratesError && rates.length === 0 && !ratesLoading && (
+                      <div className="text-center text-gray-500 text-sm py-6">
+                        No rates yet — enter a weight to see options.
+                      </div>
+                    )}
+                    {rates.length > 0 && (
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 text-slate-700 text-xs uppercase tracking-wider">
+                          <tr>
+                            <th className="text-left px-2 py-1">Carrier</th>
+                            <th className="text-left px-2 py-1">Service</th>
+                            <th className="text-right px-2 py-1">Transit</th>
+                            <th className="text-right px-2 py-1">Cost</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rates.map((r) => {
+                            const isPicked = r.carrierCode === pickedCarrier && r.serviceCode === pickedService;
+                            const total = r.shipmentCost + r.otherCost;
+                            return (
+                              <tr
+                                key={`${r.carrierCode}-${r.serviceCode}`}
+                                onClick={() => { setPickedCarrier(r.carrierCode); setPickedService(r.serviceCode); }}
+                                className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${isPicked ? "bg-gr-mint-100" : ""}`}
+                              >
+                                <td className="px-2 py-1 uppercase text-xs font-bold text-gray-700">
+                                  {r.carrierCode}
+                                </td>
+                                <td className="px-2 py-1 text-gr-black">{r.serviceName || r.serviceCode}</td>
+                                <td className="px-2 py-1 text-right text-gray-600 whitespace-nowrap">
+                                  {r.transitDays !== null ? `${r.transitDays}d` : "—"}
+                                </td>
+                                <td className="px-2 py-1 text-right font-bold text-gr-black whitespace-nowrap">
+                                  ${total.toFixed(2)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+
+                {/* Insurance top-up — only when order value > $10k. */}
+                {(pickerRow.order.orderTotal ?? 0) > 10000 && (
+                  <div>
+                    <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+                      Insurance top-up ($)
+                      <span className="ml-1 normal-case tracking-normal text-[9px] text-gray-400">
+                        our policy covers first $10k · order total ${Number(pickerRow.order.orderTotal).toFixed(2)}
+                      </span>
+                    </label>
                     <input
                       type="number"
                       step="1"
                       min="0"
-                      value={weightLb}
-                      onChange={(e) => setWeightLb(e.target.value)}
-                      className="w-20 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
-                      autoFocus
+                      value={insuranceAmount}
+                      onChange={(e) => setInsuranceAmount(e.target.value)}
+                      className="w-40 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
                     />
-                    <span className="text-sm text-gray-600">lb</span>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="15.9"
-                      value={weightOz}
-                      onChange={(e) => setWeightOz(e.target.value)}
-                      className="w-20 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
-                    />
-                    <span className="text-sm text-gray-600">oz</span>
-                    <span className="ml-2 text-xs text-gray-500">
-                      {totalOunces() > 0 ? `= ${totalOunces()} oz total` : ""}
-                    </span>
                   </div>
-                </div>
-                <div className="border border-amber-300 bg-amber-50 rounded px-3 py-2 text-xs text-amber-900 mb-3">
+                )}
+
+                {/* Billing warning + fire. */}
+                <div className="border border-amber-300 bg-amber-50 rounded px-3 py-2 text-xs text-amber-900">
                   <strong>Postage will be billed</strong> the moment you click Print. The label PDF
                   opens in a new tab and auto-triggers your browser's print dialog — send it to the
                   DYMO to get the physical label.
                 </div>
                 {printError && (
-                  <div className="border border-red-400 bg-red-50 rounded px-3 py-2 text-sm text-red-800 mb-3">
+                  <div className="border border-red-400 bg-red-50 rounded px-3 py-2 text-sm text-red-800">
                     {printError}
                   </div>
                 )}
@@ -829,8 +1127,9 @@ export default function PendingShipmentsWork() {
                   </button>
                   <button
                     onClick={firePrint}
-                    disabled={printing}
+                    disabled={printing || !pickedCarrier || !pickedService}
                     className="px-3 py-2 rounded bg-gr-green-dark text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
+                    title={(!pickedCarrier || !pickedService) ? "Pick a rate from the table first" : ""}
                   >
                     {printing ? "Printing…" : "Confirm & Print"}
                   </button>
