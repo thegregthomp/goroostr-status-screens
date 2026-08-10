@@ -65,6 +65,9 @@ type PendingShipment = {
   shipTo?: {
     name?: string;
     company?: string;
+    street1?: string;
+    street2?: string;
+    street3?: string;
     city?: string;
     state?: string;
     postalCode?: string;
@@ -360,6 +363,7 @@ export default function PendingShipmentsWork() {
     shipmentCost: number;
     otherCost: number;
     transitDays: number | null;
+    transitDaysEstimated?: boolean;
   }>>([]);
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
@@ -909,13 +913,32 @@ export default function PendingShipmentsWork() {
               /* STAGE 2: Confirmation — rate shopping + package
                  config + insurance top-up + fire. */
               <div className="px-4 py-4 space-y-3">
-                {/* Ship-to + inventory summary (compact top row). */}
+                {/* Ship-to + inventory summary. Now shows the full
+                    address (street1/2/3, not just city/state) so
+                    shippers can spot label-breaking addresses BEFORE
+                    they burn postage. See the street3 warning below —
+                    eBay accepts 3-line addresses but FedEx doesn't,
+                    happens 1-2x/week. */}
                 <div className="grid grid-cols-2 gap-3 pb-2 border-b border-slate-200">
                   <div>
                     <div className="text-[10px] text-gray-500 uppercase tracking-wider">Ship to</div>
                     <div className="text-sm text-gr-black">
                       {pickerRow.order.shipTo?.name ?? "—"}
                     </div>
+                    {pickerRow.order.shipTo?.company && (
+                      <div className="text-xs text-gray-600">{pickerRow.order.shipTo.company}</div>
+                    )}
+                    {pickerRow.order.shipTo?.street1 && (
+                      <div className="text-xs text-gray-700">{pickerRow.order.shipTo.street1}</div>
+                    )}
+                    {pickerRow.order.shipTo?.street2 && (
+                      <div className="text-xs text-gray-700">{pickerRow.order.shipTo.street2}</div>
+                    )}
+                    {pickerRow.order.shipTo?.street3 && (
+                      <div className="text-xs text-red-700 font-bold">
+                        {pickerRow.order.shipTo.street3}
+                      </div>
+                    )}
                     <div className="text-xs text-gray-500">
                       {pickerRow.order.shipTo?.city ?? "—"},{" "}
                       <span className="font-bold text-gr-black">{pickerRow.order.shipTo?.state ?? "—"}</span>{" "}
@@ -931,6 +954,30 @@ export default function PendingShipmentsWork() {
                     </div>
                   </div>
                 </div>
+
+                {/* Address warnings — surface things ShipStation will
+                    accept for RATING but that carriers reject at
+                    LABEL-CREATE time. Most common: 3-line addresses
+                    from eBay (FedEx caps at 2 lines). Shipper needs
+                    to squash street3 into street2 in ShipStation
+                    before firing. */}
+                {pickerRow.order.shipTo?.street3 && (
+                  <div className="border border-red-400 bg-red-50 rounded px-3 py-2 text-xs text-red-900">
+                    <strong>3-line address detected</strong> — eBay
+                    accepts a third address line but FedEx doesn't.
+                    Edit the address in ShipStation first (merge the
+                    red line into Address 2), then come back and print.
+                    {" "}
+                    <a
+                      href={`https://ship.shipstation.com/orders/awaiting-shipment?search=${encodeURIComponent(pickerRow.order.orderNumber ?? "")}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline font-bold"
+                    >
+                      Open in ShipStation →
+                    </a>
+                  </div>
+                )}
 
                 {/* Package + Residential row. */}
                 <div className="grid grid-cols-2 gap-3">
@@ -1192,8 +1239,13 @@ export default function PendingShipmentsWork() {
                                   {r.carrierCode}
                                 </td>
                                 <td className="px-2 py-1 text-gr-black">{r.serviceName || r.serviceCode}</td>
-                                <td className="px-2 py-1 text-right text-gray-600 whitespace-nowrap">
-                                  {r.transitDays !== null ? `${r.transitDays}d` : "—"}
+                                <td
+                                  className="px-2 py-1 text-right text-gray-600 whitespace-nowrap"
+                                  title={r.transitDaysEstimated ? "Estimated max transit — carrier didn't provide a specific number" : ""}
+                                >
+                                  {r.transitDays !== null
+                                    ? `${r.transitDaysEstimated ? "~" : ""}${r.transitDays}d`
+                                    : "—"}
                                 </td>
                                 <td className="px-2 py-1 text-right font-bold text-gr-black whitespace-nowrap">
                                   ${total.toFixed(2)}
