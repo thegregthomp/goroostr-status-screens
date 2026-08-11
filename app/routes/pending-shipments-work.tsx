@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { LoaderArgs } from "@remix-run/node";
-import { useLoaderData, Link } from "@remix-run/react";
+import { useLoaderData, Link, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import stylesheetUrl from "../styles/global.css";
 import { getPendingShipments } from "~/models/orders.server";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
+import { authClient, authFetch, AuthRequiredError, type AuthUser } from "~/lib/auth.client";
 
 /**
  * Shipping work view — /pending-shipments-work.
@@ -34,9 +35,15 @@ export function meta() {
 
 export async function loader({ request }: LoaderArgs) {
   const data = await getPendingShipments();
+  const api = process.env.GOROOSTR_ENDPOINT ?? "";
+  // /spa/... base for auth'd endpoints (login, print-*). Derived from
+  // the same env var by stripping the trailing /api so we don't need
+  // to add a second Netlify env var.
+  const spaEndpoint = api.replace(/\/api\/?$/, "") + "/spa";
   return json({
     ...data,
-    apiEndpoint: process.env.GOROOSTR_ENDPOINT,
+    apiEndpoint: api,
+    spaEndpoint,
   });
 }
 
@@ -271,6 +278,33 @@ export default function PendingShipmentsWork() {
   const [loadError, setLoadError] = useState<string | null>(initial.error ?? null);
   const [query, setQuery] = useState("");
   const apiEndpoint = initial.apiEndpoint;
+  const spaEndpoint = initial.spaEndpoint;
+
+  // Auth: Sanctum token in localStorage. All postage-billing print
+  // calls go through /spa/shipping/* under auth:sanctum so every
+  // action attributes to a user (shipping_activity audit log).
+  const navigate = useNavigate();
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  useEffect(() => {
+    const t = authClient.getToken();
+    const u = authClient.getUser();
+    if (!t || !u) {
+      navigate("/login?next=/pending-shipments-work", { replace: true });
+      return;
+    }
+    setAuthUser(u);
+  }, [navigate]);
+  const signOut = () => {
+    authClient.clear();
+    navigate("/login", { replace: true });
+  };
+  const handleAuthFailure = (e: unknown) => {
+    if (e instanceof AuthRequiredError) {
+      navigate("/login?next=/pending-shipments-work", { replace: true });
+      return true;
+    }
+    return false;
+  };
 
   // Auth gate: same 30-day cookie as the wall so a single unlock covers
   // both screens on the same browser.
@@ -1062,7 +1096,7 @@ export default function PendingShipmentsWork() {
         : undefined;
       const insurance = Number(insuranceAmount) || 0;
 
-      const resp = await fetch(`${apiEndpoint}/shipping/print-label`, {
+      const resp = await authFetch(`${spaEndpoint}/shipping/print-label`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1114,7 +1148,7 @@ export default function PendingShipmentsWork() {
       // would catch up anyway, but this feels responsive).
       setShipments((prev) => prev.filter((s) => s.orderId !== pickerRow.order.orderId));
     } catch (e) {
-      setPrintError((e as Error).message ?? "Print failed");
+      if (handleAuthFailure(e)) return; setPrintError((e as Error).message ?? "Print failed");
     } finally {
       setPrinting(false);
     }
@@ -1186,7 +1220,7 @@ export default function PendingShipmentsWork() {
 
     setPrinting(true);
     try {
-      const resp = await fetch(`${apiEndpoint}/shipping/print-split`, {
+      const resp = await authFetch(`${spaEndpoint}/shipping/print-split`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1228,7 +1262,7 @@ export default function PendingShipmentsWork() {
         setShipments((prev) => prev.filter((s) => s.orderId !== pickerRow.order.orderId));
       }
     } catch (e) {
-      setPrintError((e as Error).message ?? "Split print failed");
+      if (handleAuthFailure(e)) return; setPrintError((e as Error).message ?? "Split print failed");
     } finally {
       setPrinting(false);
     }
@@ -1347,7 +1381,7 @@ export default function PendingShipmentsWork() {
     setCombinePrinting(true);
     try {
       const insurance = Number(f.insuranceAmount) || 0;
-      const resp = await fetch(`${apiEndpoint}/shipping/print-combine`, {
+      const resp = await authFetch(`${spaEndpoint}/shipping/print-combine`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1383,7 +1417,7 @@ export default function PendingShipmentsWork() {
       const combinedIds = new Set(combineSourceRows.map((r) => r.order.orderId));
       setShipments((prev) => prev.filter((s) => !combinedIds.has(s.orderId)));
     } catch (e) {
-      setCombineError((e as Error).message ?? "Combine print failed");
+      if (handleAuthFailure(e)) return; setCombineError((e as Error).message ?? "Combine print failed");
     } finally {
       setCombinePrinting(false);
     }
@@ -1483,7 +1517,7 @@ export default function PendingShipmentsWork() {
     setManualPrinting(true);
     try {
       const insurance = Number(m.insuranceAmount) || 0;
-      const resp = await fetch(`${apiEndpoint}/shipping/print-manual`, {
+      const resp = await authFetch(`${spaEndpoint}/shipping/print-manual`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1526,7 +1560,7 @@ export default function PendingShipmentsWork() {
         labelDataUrl,
       });
     } catch (e) {
-      setManualError((e as Error).message ?? "Manual print failed");
+      if (handleAuthFailure(e)) return; setManualError((e as Error).message ?? "Manual print failed");
     } finally {
       setManualPrinting(false);
     }
@@ -1603,6 +1637,19 @@ export default function PendingShipmentsWork() {
               Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               {isRefreshing && " · refreshing…"}
             </span>
+            {authUser && (
+              <span className="inline-flex items-center gap-1.5 border-l border-slate-300 pl-3">
+                <span className="text-gray-700 font-semibold">{authUser.name || authUser.email}</span>
+                <button
+                  type="button"
+                  onClick={signOut}
+                  className="text-xs text-gray-500 hover:text-red-700 underline"
+                  title="Sign out"
+                >
+                  Sign out
+                </button>
+              </span>
+            )}
           </div>
         </div>
 
