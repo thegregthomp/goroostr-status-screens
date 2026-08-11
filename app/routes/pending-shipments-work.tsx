@@ -366,6 +366,31 @@ export default function PendingShipmentsWork() {
   const filtered = useMemo(() => filterRows(rows), [rows, query]);
   const filteredShipped = useMemo(() => filterRows(shippedRows), [shippedRows, query]);
 
+  // KAN-44 Phase C — combine detection. Group pending rows by
+  // shipTo signature (name + postalCode, case-insensitive) so a row
+  // can advertise "combine with N others" if it has same-address
+  // peers. Uses `rows` not `filtered` so a peer hidden by the search
+  // filter still counts (avoids "combine with 0" when the peer is
+  // filtered out).
+  const combineGroups = useMemo(() => {
+    const bySig = new Map<string, WorkRow[]>();
+    for (const r of rows) {
+      const s = r.order.shipTo;
+      const sig = ((s?.name ?? "") + "|" + (s?.postalCode ?? "")).toLowerCase().trim();
+      if (!sig || sig === "|") continue;
+      const list = bySig.get(sig) ?? [];
+      list.push(r);
+      bySig.set(sig, list);
+    }
+    return bySig;
+  }, [rows]);
+  const combinePeersFor = (r: WorkRow): WorkRow[] => {
+    const s = r.order.shipTo;
+    const sig = ((s?.name ?? "") + "|" + (s?.postalCode ?? "")).toLowerCase().trim();
+    const list = combineGroups.get(sig) ?? [];
+    return list.filter((x) => x.order.orderId !== r.order.orderId);
+  };
+
   // Print flow state — three stages:
   //   1. picker    — one section per SKU on the order; each collects
   //                  its own inventory pick
@@ -1098,6 +1123,151 @@ export default function PendingShipmentsWork() {
     closePicker();
   };
 
+  // KAN-44 Phase C — combine modal state. Opens when a shipper clicks
+  // the "Combine with N" chip on a pending row. Modal shows all items
+  // across the source orders + one shipment card (carrier/service/
+  // weight/insurance). On Print: POST /shipping/print-combine → one
+  // label, every source order marked shipped.
+  const [combineOpen, setCombineOpen] = useState(false);
+  const [combineSourceRows, setCombineSourceRows] = useState<WorkRow[]>([]);
+  const [combineInventoryIds, setCombineInventoryIds] = useState<number[]>([]);
+  const [combineForm, setCombineForm] = useState({
+    weightLb: "",
+    weightOz: "",
+    carrierCode: "",
+    serviceCode: "",
+    packageCode: "package",
+    confirmation: "none",
+    insuranceAmount: "",
+    insuranceProvider: "carrier",
+  });
+  const [combineCarriers, setCombineCarriers] = useState<Array<{code: string; name: string}>>([]);
+  const [combineServices, setCombineServices] = useState<Array<{code: string; name: string}>>([]);
+  const [combinePackages, setCombinePackages] = useState<Array<{code: string; name: string}>>([]);
+  const [combinePrinting, setCombinePrinting] = useState(false);
+  const [combineError, setCombineError] = useState<string | null>(null);
+  const [combineResult, setCombineResult] = useState<{
+    trackingNumber: string | null;
+    shipmentCost: number | null;
+    carrierCode: string | null;
+    labelDataUrl: string | null;
+  } | null>(null);
+
+  const openCombine = (primary: WorkRow) => {
+    const peers = combinePeersFor(primary);
+    setCombineSourceRows([primary, ...peers]);
+    setCombineInventoryIds([]);
+    setCombineForm({
+      weightLb: "", weightOz: "",
+      carrierCode: "", serviceCode: "",
+      packageCode: "package", confirmation: "none",
+      insuranceAmount: "", insuranceProvider: "carrier",
+    });
+    setCombineResult(null);
+    setCombineError(null);
+    setCombineOpen(true);
+  };
+  const closeCombine = () => {
+    if (combineResult?.labelDataUrl) URL.revokeObjectURL(combineResult.labelDataUrl);
+    setCombineOpen(false);
+    setCombineResult(null);
+    setCombineSourceRows([]);
+    setCombineInventoryIds([]);
+  };
+
+  // Load carriers + services + packages on combine modal open / carrier change.
+  useEffect(() => {
+    if (!combineOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`${apiEndpoint}/shipping/carriers`);
+        const data = await resp.json();
+        if (!cancelled && data.success !== false) setCombineCarriers(data.carriers ?? []);
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [apiEndpoint, combineOpen]);
+  useEffect(() => {
+    if (!combineOpen || !combineForm.carrierCode) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [svcResp, pkgResp] = await Promise.all([
+          fetch(`${apiEndpoint}/shipping/carriers/${combineForm.carrierCode}/services`),
+          fetch(`${apiEndpoint}/shipping/carriers/${combineForm.carrierCode}/packages`),
+        ]);
+        const svc = await svcResp.json();
+        const pkg = await pkgResp.json();
+        if (cancelled) return;
+        if (svc.success !== false) setCombineServices(svc.services ?? []);
+        if (pkg.success !== false) setCombinePackages(pkg.packages ?? []);
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [apiEndpoint, combineOpen, combineForm.carrierCode]);
+
+  const fireCombinePrint = async () => {
+    setCombineError(null);
+    const f = combineForm;
+    const wOz = (Number(f.weightLb) || 0) * 16 + (Number(f.weightOz) || 0);
+    if (combineSourceRows.length < 2) {
+      setCombineError("Need at least 2 orders to combine.");
+      return;
+    }
+    if (combineInventoryIds.length === 0) {
+      setCombineError("Pick at least one inventory unit for the combined shipment.");
+      return;
+    }
+    if (wOz <= 0) { setCombineError("Enter a weight."); return; }
+    if (!f.carrierCode || !f.serviceCode) {
+      setCombineError("Pick a carrier and service."); return;
+    }
+    setCombinePrinting(true);
+    try {
+      const insurance = Number(f.insuranceAmount) || 0;
+      const resp = await fetch(`${apiEndpoint}/shipping/print-combine`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderIds: combineSourceRows.map((r) => r.order.orderId),
+          inventoryIds: combineInventoryIds,
+          weightOz: wOz,
+          carrierCode: f.carrierCode,
+          serviceCode: f.serviceCode,
+          packageCode: f.packageCode,
+          confirmation: f.confirmation,
+          ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider: f.insuranceProvider } : {}),
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.success === false) {
+        throw new Error(data.error ?? `HTTP ${resp.status}`);
+      }
+      let labelDataUrl: string | null = null;
+      if (data.labelData) {
+        const binary = atob(data.labelData);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        labelDataUrl = URL.createObjectURL(blob);
+      }
+      setCombineResult({
+        trackingNumber: data.trackingNumber ?? null,
+        shipmentCost: data.shipmentCost ?? null,
+        carrierCode: data.carrierCode ?? null,
+        labelDataUrl,
+      });
+      // Drop all combined orders from the pending list optimistically.
+      const combinedIds = new Set(combineSourceRows.map((r) => r.order.orderId));
+      setShipments((prev) => prev.filter((s) => !combinedIds.has(s.orderId)));
+    } catch (e) {
+      setCombineError((e as Error).message ?? "Combine print failed");
+    } finally {
+      setCombinePrinting(false);
+    }
+  };
+
   // KAN-44 Phase B — "New shipment" (no order upstream) modal state.
   // Opens from the header "+ New shipment" button. Ops types a shipTo
   // address + parcel details, hits Print, gets tracking# back.
@@ -1450,13 +1620,27 @@ export default function PendingShipmentsWork() {
                         {o.orderTotal !== undefined ? `$${Number(o.orderTotal).toFixed(2)}` : ""}
                       </td>
                       <td className="px-2 py-2 text-center align-top">
-                        <button
-                          onClick={() => openPicker(r)}
-                          className="inline-flex items-center px-3 py-1 rounded-md bg-gr-green-dark text-white text-xs font-bold hover:opacity-90"
-                          title="Pick inventory unit(s), then print shipping label"
-                        >
-                          Print
-                        </button>
+                        <div className="flex flex-col items-center gap-1">
+                          <button
+                            onClick={() => openPicker(r)}
+                            className="inline-flex items-center px-3 py-1 rounded-md bg-gr-green-dark text-white text-xs font-bold hover:opacity-90"
+                            title="Pick inventory unit(s), then print shipping label"
+                          >
+                            Print
+                          </button>
+                          {/* KAN-44 Phase C — combine chip. Visible only
+                              when this row has same-address peers in
+                              the pending list. */}
+                          {combinePeersFor(r).length > 0 && (
+                            <button
+                              onClick={() => openCombine(r)}
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-purple-300 bg-purple-50 text-purple-800 hover:bg-purple-100"
+                              title={`This buyer/address has ${combinePeersFor(r).length + 1} pending orders. Combine into one label.`}
+                            >
+                              🔗 Combine with {combinePeersFor(r).length}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -2658,6 +2842,256 @@ export default function PendingShipmentsWork() {
           </div>
         </div>
       </div>
+
+      {/* KAN-44 Phase C — combine modal. Opens from the row-level
+          "🔗 Combine with N" chip when a pending row shares its
+          shipTo with other pending rows. Shows all items across the
+          combined orders, one shipment card, prints one label. */}
+      {combineOpen && combineSourceRows.length >= 2 && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center overflow-y-auto py-8" onClick={closeCombine}>
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <div className="text-lg font-bold text-gr-black">
+                  Combine {combineSourceRows.length} orders → 1 label
+                </div>
+                <div className="text-xs text-gray-500">
+                  {combineSourceRows[0].order.shipTo?.name} ·{" "}
+                  {combineSourceRows[0].order.shipTo?.city},{" "}
+                  {combineSourceRows[0].order.shipTo?.state}{" "}
+                  {combineSourceRows[0].order.shipTo?.postalCode}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeCombine}
+                className="text-gray-500 hover:text-gr-black text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            {combineResult ? (
+              <div className="px-4 py-4 space-y-3">
+                <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded p-3">
+                  <div className="font-bold mb-1">Combined label printed</div>
+                  <div className="font-mono text-xs">
+                    {combineResult.carrierCode} · {combineResult.trackingNumber}
+                  </div>
+                  {combineResult.shipmentCost !== null && (
+                    <div className="text-xs text-emerald-700 mt-1">
+                      ${combineResult.shipmentCost?.toFixed(2)}
+                    </div>
+                  )}
+                  <div className="text-xs text-emerald-700 mt-2">
+                    Marked shipped: order {combineSourceRows.map((r) => "#" + r.order.orderNumber).join(", ")}
+                  </div>
+                </div>
+                {combineResult.labelDataUrl && (
+                  <iframe
+                    src={combineResult.labelDataUrl}
+                    className="w-full h-96 border border-slate-200 rounded"
+                    title="Combined label preview"
+                  />
+                )}
+                <div className="flex items-center justify-end gap-2">
+                  {combineResult.labelDataUrl && (
+                    <a
+                      href={combineResult.labelDataUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-2 rounded border border-gray-300 text-gr-black text-sm hover:bg-slate-50"
+                    >
+                      Open label PDF
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={closeCombine}
+                    className="px-3 py-2 rounded bg-gr-green-dark text-white text-sm font-bold hover:opacity-90"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="px-4 py-4 space-y-3">
+                {/* Source orders summary + inventory picker */}
+                <div>
+                  <div className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+                    Items across {combineSourceRows.length} orders
+                  </div>
+                  <div className="space-y-2 max-h-72 overflow-y-auto border border-slate-200 rounded p-2 bg-slate-50/40">
+                    {combineSourceRows.map((r) => (
+                      <div key={r.order.orderId} className="text-xs">
+                        <div className="font-bold text-gr-black">
+                          Order #{r.order.orderNumber}{" "}
+                          <span className="text-gray-500 font-normal">
+                            · ${Number(r.order.orderTotal ?? 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <ul className="list-disc pl-5 text-gray-700 mt-0.5">
+                          {r.items.map((it, i) => (
+                            <li key={i}>
+                              <span className="font-mono">{it.sku ?? "—"}</span>{" "}
+                              {it.name && <span className="text-gray-500">— {it.name}</span>}
+                              {(it.quantity ?? 0) > 1 && <span className="ml-1 text-gr-green-dark">×{it.quantity}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Inventory ids picker — free-form. Ops types comma-
+                    separated inventory ids they've already scanned or
+                    selected from another surface. v1 keeps this simple;
+                    integrating with the per-item ItemPickerSection
+                    (from the split flow) is a follow-up if needed. */}
+                <div>
+                  <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block mb-1">
+                    Inventory IDs (comma-separated) *
+                  </label>
+                  <input
+                    placeholder="e.g. 12345, 12346, 12347"
+                    value={combineInventoryIds.join(", ")}
+                    onChange={(e) => {
+                      const parsed = e.target.value
+                        .split(",")
+                        .map((s) => Number(s.trim()))
+                        .filter((n) => Number.isFinite(n) && n > 0);
+                      setCombineInventoryIds(parsed);
+                    }}
+                    className="w-full text-sm border border-gray-300 rounded px-2 py-1"
+                  />
+                  <div className="text-[10px] text-gray-500 mt-0.5">
+                    Paste inventory IDs from your scan or Nova. All get tracking# attached at once.
+                  </div>
+                </div>
+
+                {/* Shipping controls */}
+                <div>
+                  <div className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Shipping</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={combineForm.carrierCode}
+                      onChange={(e) => setCombineForm({ ...combineForm, carrierCode: e.target.value, serviceCode: "" })}
+                      className="text-sm border border-gray-300 rounded px-2 py-1"
+                    >
+                      <option value="">— carrier —</option>
+                      {combineCarriers.map((c) => (
+                        <option key={c.code} value={c.code}>{c.name || c.code}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={combineForm.serviceCode}
+                      onChange={(e) => setCombineForm({ ...combineForm, serviceCode: e.target.value })}
+                      disabled={!combineForm.carrierCode}
+                      className="text-sm border border-gray-300 rounded px-2 py-1 disabled:bg-slate-100"
+                    >
+                      <option value="">— service —</option>
+                      {combineServices.map((s) => (
+                        <option key={s.code} value={s.code}>{s.name || s.code}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={combineForm.packageCode}
+                      onChange={(e) => setCombineForm({ ...combineForm, packageCode: e.target.value })}
+                      className="text-sm border border-gray-300 rounded px-2 py-1"
+                    >
+                      {combinePackages.length === 0 && <option value="package">package</option>}
+                      {combinePackages.map((p) => (
+                        <option key={p.code} value={p.code}>{p.name || p.code}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={combineForm.confirmation}
+                      onChange={(e) => setCombineForm({ ...combineForm, confirmation: e.target.value })}
+                      className="text-sm border border-gray-300 rounded px-2 py-1"
+                    >
+                      <option value="none">Signature: none</option>
+                      <option value="delivery">Delivery Confirmation</option>
+                      <option value="signature">Signature Required</option>
+                      <option value="adult_signature">Adult Signature</option>
+                      <option value="direct_signature">Direct (FedEx)</option>
+                    </select>
+                    <div className="col-span-2">
+                      <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">
+                        Weight (lb / oz)
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number" step="1" min="0"
+                          value={combineForm.weightLb}
+                          onChange={(e) => setCombineForm({ ...combineForm, weightLb: e.target.value })}
+                          className="w-16 text-sm border border-gray-300 rounded px-2 py-1"
+                        />
+                        <span className="text-xs text-gray-600">lb</span>
+                        <input
+                          type="number" step="0.1" min="0" max="15.9"
+                          value={combineForm.weightOz}
+                          onChange={(e) => setCombineForm({ ...combineForm, weightOz: e.target.value })}
+                          className="w-16 text-sm border border-gray-300 rounded px-2 py-1"
+                        />
+                        <span className="text-xs text-gray-600">oz</span>
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">
+                        Insurance ($, optional)
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number" step="1" min="0"
+                          value={combineForm.insuranceAmount}
+                          onChange={(e) => setCombineForm({ ...combineForm, insuranceAmount: e.target.value })}
+                          className="w-28 text-sm border border-gray-300 rounded px-2 py-1"
+                          placeholder="0"
+                        />
+                        <select
+                          value={combineForm.insuranceProvider}
+                          onChange={(e) => setCombineForm({ ...combineForm, insuranceProvider: e.target.value })}
+                          className="text-sm border border-gray-300 rounded px-2 py-1"
+                        >
+                          <option value="carrier">Carrier</option>
+                          <option value="shipsurance">Shipsurance</option>
+                          <option value="xcover">XCover</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {combineError && (
+                  <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                    {combineError}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeCombine}
+                    disabled={combinePrinting}
+                    className="px-3 py-2 rounded border border-gray-300 text-gr-black text-sm hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={fireCombinePrint}
+                    disabled={combinePrinting}
+                    className="px-3 py-2 rounded bg-purple-700 text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
+                  >
+                    {combinePrinting ? "Printing…" : `Print combined label (${combineSourceRows.length} orders)`}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* KAN-44 Phase B — "New shipment" (no order upstream) modal.
           Opens from the header "+ New shipment" button. Ops types a
