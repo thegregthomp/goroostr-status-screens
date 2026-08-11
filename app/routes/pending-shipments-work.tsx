@@ -660,6 +660,12 @@ export default function PendingShipmentsWork() {
     carrierCode: string | null;
     serviceCode: string | null;
     labelDataUrl: string | null;
+    anomaly?: {
+      recommended_cost: number;
+      actual_cost: number;
+      delta: number;
+      multiplier_seen: number;
+    } | null;
   } | null>(null);
   // Ref to the label-preview iframe on the success card. Its onLoad
   // handler auto-fires contentWindow.print() inside the modal's own
@@ -1149,6 +1155,14 @@ export default function PendingShipmentsWork() {
         : undefined;
       const insurance = Number(insuranceAmount) || 0;
 
+      // Recommended cost at the moment ops hit Print — backend uses
+      // it for the cost-anomaly Slack alert. Send even if ops picked
+      // something different from the rec; the compare is
+      // actual vs recommendation, not vs picked.
+      const recCost = recommendedRate
+        ? recommendedRate.shipmentCost + recommendedRate.otherCost
+        : null;
+
       const resp = await authFetch(`${spaEndpoint}/shipping/print-label`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1163,6 +1177,7 @@ export default function PendingShipmentsWork() {
           confirmation,
           ...(dims ? { dimensions: dims } : {}),
           ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider } : {}),
+          ...(recCost !== null && recCost > 0 ? { recommendedRateCost: recCost } : {}),
         }),
       });
       const data = await resp.json();
@@ -1196,6 +1211,7 @@ export default function PendingShipmentsWork() {
         carrierCode: data.carrierCode ?? null,
         serviceCode: data.serviceCode ?? null,
         labelDataUrl,
+        anomaly: data.anomaly ?? null,
       });
       // Drop the pending row from the list optimistically (60s poll
       // would catch up anyway, but this feels responsive).
@@ -2058,6 +2074,23 @@ export default function PendingShipmentsWork() {
                     <strong> Print label</strong> button below. Send it to the DYMO.
                   </div>
                 </div>
+                {/* Cost-anomaly warning — postage came in 2×+ what the
+                    recommendation would have cost. Slack already got a
+                    ping; this in-modal banner lets ops catch it before
+                    they walk away. */}
+                {printResult.anomaly && (
+                  <div className="border border-red-400 bg-red-50 rounded px-3 py-3 mb-3">
+                    <div className="text-red-900 font-bold text-sm mb-1">
+                      ⚠️ Postage {printResult.anomaly.multiplier_seen.toFixed(1)}× higher than the recommendation
+                    </div>
+                    <div className="text-red-800 text-xs">
+                      Billed <strong>${printResult.anomaly.actual_cost.toFixed(2)}</strong>{" "}
+                      · Recommendation was <strong>${printResult.anomaly.recommended_cost.toFixed(2)}</strong>{" "}
+                      (overrun <strong>+${printResult.anomaly.delta.toFixed(2)}</strong>).
+                      A Slack alert was sent. Void this label in ShipStation if it was a misclick.
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-y-1 text-sm mb-3">
                   <div className="text-gray-500 text-xs uppercase tracking-wider">Tracking</div>
                   <div className="font-mono text-gr-black">{printResult.trackingNumber ?? "—"}</div>
