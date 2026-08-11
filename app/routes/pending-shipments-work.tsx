@@ -538,6 +538,17 @@ export default function PendingShipmentsWork() {
   // which every ground service meets). Uses `rates` (multi-carrier
   // since we always fetch all whitelisted now).
   const maxTransitDays = pickerRow ? maxTransitFor(pickerRow.order) : 5;
+  // USPS (Stamps.com) gets a narrower recommendation window per Greg's
+  // rules 2026-08-11: only recommend USPS when the order is under
+  // $300, from eBay, AND at least $1 cheaper than the cheapest non-
+  // USPS eligible option. Ops can still pick USPS manually from the
+  // rate table for out-of-band cases — this only gates auto-recommend.
+  const orderTotalForRec = pickerRow?.order?.orderTotal ?? 0;
+  const marketplaceForRec = (
+    pickerRow?.order?.orderSource ??
+    (pickerRow?.order as any)?.advancedOptions?.source ??
+    ""
+  ).toString().toLowerCase();
   const recommendedRate = useMemo(() => {
     if (rates.length === 0) return null;
     const eligible = rates.filter((r) => {
@@ -550,12 +561,32 @@ export default function PendingShipmentsWork() {
       return r.transitDays <= maxTransitDays;
     });
     if (eligible.length === 0) return null;
-    return eligible.reduce((best, r) => {
-      const bTotal = best.shipmentCost + best.otherCost;
-      const rTotal = r.shipmentCost + r.otherCost;
-      return rTotal < bTotal ? r : best;
-    });
-  }, [rates, maxTransitDays]);
+
+    const isUsps = (r: typeof eligible[number]) => r.carrierCode === "stamps_com";
+    const totalOf = (r: typeof eligible[number]) => r.shipmentCost + r.otherCost;
+
+    // Cheapest overall + cheapest non-USPS (needed for the USPS $1
+    // margin check + fallback when USPS is disqualified).
+    const cheapest = eligible.reduce((best, r) =>
+      totalOf(r) < totalOf(best) ? r : best
+    );
+    const nonUspsEligible = eligible.filter((r) => !isUsps(r));
+    const cheapestNonUsps = nonUspsEligible.length
+      ? nonUspsEligible.reduce((best, r) => (totalOf(r) < totalOf(best) ? r : best))
+      : null;
+
+    if (!isUsps(cheapest)) return cheapest;
+
+    // USPS gate: only if under $300 AND eBay AND >=$1 cheaper.
+    const uspsAllowedByOrder =
+      orderTotalForRec > 0 && orderTotalForRec < 300 && marketplaceForRec === "ebay";
+    const uspsCheaperByEnough =
+      !cheapestNonUsps || totalOf(cheapestNonUsps) - totalOf(cheapest) >= 1.0;
+
+    if (uspsAllowedByOrder && uspsCheaperByEnough) return cheapest;
+    // Fallback: cheapest non-USPS if USPS didn't qualify.
+    return cheapestNonUsps ?? cheapest;
+  }, [rates, maxTransitDays, orderTotalForRec, marketplaceForRec]);
 
   // Cost of the currently-picked carrier+service (for savings display).
   const pickedTotal = useMemo(() => {
