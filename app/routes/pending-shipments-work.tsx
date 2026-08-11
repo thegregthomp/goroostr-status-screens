@@ -2376,14 +2376,26 @@ export default function PendingShipmentsWork() {
                   const isAlreadyPicked =
                     recommendedRate.carrierCode === pickedCarrier &&
                     recommendedRate.serviceCode === pickedService;
-                  if (isAlreadyPicked) return null;
                   const savings = pickedTotal !== null ? pickedTotal - recTotal : null;
+                  // Always render the chip when a recommendation exists.
+                  // Applied → green confirmation badge. Not applied →
+                  // yellow suggestion with "Use it" button. Keeping it
+                  // visible even after auto-apply gives ops signal that
+                  // the rec system is working, and diagnoses cases where
+                  // auto-apply silently fails (chip visible but nothing
+                  // picked in the rate table = something's broken).
+                  const bg = isAlreadyPicked ? "bg-emerald-50" : "bg-yellow-50";
+                  const border = isAlreadyPicked ? "border-emerald-400" : "border-yellow-400";
+                  const icon = isAlreadyPicked ? "✓" : "⭐";
+                  const heading = isAlreadyPicked
+                    ? "Auto-picked · cheapest that meets buyer's ~" + maxTransitDays + "-day promise"
+                    : "Recommended · cheapest that meets buyer's ~" + maxTransitDays + "-day promise";
                   return (
-                    <div className="bg-yellow-50 border-2 border-yellow-400 rounded-lg p-3 flex items-center gap-3">
-                      <div className="text-2xl">⭐</div>
+                    <div className={`${bg} border-2 ${border} rounded-lg p-3 flex items-center gap-3`}>
+                      <div className="text-2xl">{icon}</div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-bold text-yellow-900 uppercase tracking-wider">
-                          Recommended · cheapest that meets buyer's ~{maxTransitDays}-day promise
+                        <div className={`text-xs font-bold uppercase tracking-wider ${isAlreadyPicked ? "text-emerald-900" : "text-yellow-900"}`}>
+                          {heading}
                         </div>
                         <div className="text-sm text-gr-black mt-0.5">
                           <span className="font-mono font-bold">{(recommendedRate.carrierCode ?? "").toUpperCase()}</span>
@@ -2394,20 +2406,22 @@ export default function PendingShipmentsWork() {
                           )}
                           {" · "}
                           <span className="font-bold">${recTotal.toFixed(2)}</span>
-                          {savings !== null && savings > 0.5 && (
+                          {!isAlreadyPicked && savings !== null && savings > 0.5 && (
                             <span className="ml-2 inline-block bg-emerald-100 text-emerald-900 border border-emerald-300 rounded px-1.5 py-0.5 text-xs font-bold">
                               save ${savings.toFixed(2)}
                             </span>
                           )}
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={applyRecommendation}
-                        className="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-bold whitespace-nowrap"
-                      >
-                        Use it
-                      </button>
+                      {!isAlreadyPicked && (
+                        <button
+                          type="button"
+                          onClick={applyRecommendation}
+                          className="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-bold whitespace-nowrap"
+                        >
+                          Use it
+                        </button>
+                      )}
                     </div>
                   );
                 })()}
