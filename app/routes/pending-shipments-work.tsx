@@ -475,6 +475,13 @@ export default function PendingShipmentsWork() {
   }>>([]);
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
+  // Compare-all mode: when true, the rate query drops the
+  // `carrierCodes: [pickedCarrier]` restriction so ShipStation returns
+  // rates from every whitelisted carrier. Rate table renders a Carrier
+  // column, sorts by total cost so cheapest wins visibly. Backend
+  // dispatches carriers in parallel + caches 5 min so wall-clock is
+  // ~slowest single carrier, not the sum.
+  const [compareAllCarriers, setCompareAllCarriers] = useState<boolean>(false);
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printResult, setPrintResult] = useState<{
@@ -685,7 +692,10 @@ export default function PendingShipmentsWork() {
   // as a table, clicks one to select. Debounced 300ms.
   useEffect(() => {
     if (!pickerRow || !confirmMode) return;
-    if (!pickedCarrier) {
+    // In compare-all mode we don't need a picked carrier — the query
+    // asks for every whitelisted one. In per-carrier mode, no carrier
+    // = no rate query.
+    if (!compareAllCarriers && !pickedCarrier) {
       setRates([]);
       return;
     }
@@ -703,6 +713,12 @@ export default function PendingShipmentsWork() {
           ? { length: Number(dimL), width: Number(dimW), height: Number(dimH) }
           : undefined;
         const insurance = Number(insuranceAmount) || 0;
+        // Compare-all mode: send every whitelisted carrier as
+        // carrierCodes[] so the backend parallelizes across all of
+        // them. Per-carrier mode: keep the single-carrier scope.
+        const carrierCodesPayload = compareAllCarriers
+          ? { carrierCodes: carriers.map((c) => c.code).filter(Boolean) }
+          : { carrierCodes: [pickedCarrier] };
         const resp = await fetch(`${apiEndpoint}/shipping/rates`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -711,7 +727,7 @@ export default function PendingShipmentsWork() {
             weightOz: totalOz,
             packageCode,
             residential,
-            carrierCodes: [pickedCarrier],
+            ...carrierCodesPayload,
             ...(dims ? { dimensions: dims } : {}),
             ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider } : {}),
           }),
@@ -733,7 +749,7 @@ export default function PendingShipmentsWork() {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, pickedCarrier]);
+  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, pickedCarrier, compareAllCarriers, carriers]);
 
   // Rules-engine defaults — fetched on confirm-mode open. Every
   // matching rule's actions get merged into a bundle; we apply each
@@ -1773,6 +1789,28 @@ export default function PendingShipmentsWork() {
                 </div>
                 <div className="text-xs text-gray-500 font-mono">
                   Order #{pickerRow.order.orderNumber ?? pickerRow.order.orderId}
+                  {/* SKU trail — ops loses track of what's in the box
+                      once they're deep in the confirm modal. Show up
+                      to 3 SKUs inline; more collapses to "+N more". */}
+                  {pickerRow.items.length > 0 && (
+                    <span className="ml-2 text-gr-black">
+                      ·{" "}
+                      {pickerRow.items.slice(0, 3).map((it, i) => (
+                        <span key={i}>
+                          {i > 0 && <span className="text-gray-400">, </span>}
+                          <span className="font-bold">
+                            {it.sku ?? "—"}
+                          </span>
+                          {(it.quantity ?? 0) > 1 && (
+                            <span className="text-gr-green-dark"> ×{it.quantity}</span>
+                          )}
+                        </span>
+                      ))}
+                      {pickerRow.items.length > 3 && (
+                        <span className="text-gray-500"> +{pickerRow.items.length - 3} more</span>
+                      )}
+                    </span>
+                  )}
                 </div>
               </div>
               <button
@@ -2219,13 +2257,16 @@ export default function PendingShipmentsWork() {
                   </select>
                 </div>
 
-                {/* Rate table for the picked carrier. All services
-                    with cost + transit, click a row to select. */}
-                {pickedCarrier && (
+                {/* Rate table. Per-carrier mode = single carrier's
+                    services. Compare-all mode = every whitelisted
+                    carrier's rates in one merged table sorted by cost. */}
+                {(pickedCarrier || compareAllCarriers) && (
                   <div>
                     <div className="flex items-baseline justify-between mb-1">
                       <label className="text-[10px] text-gray-500 uppercase tracking-wider flex items-center gap-2">
-                        {(pickedCarrier ?? "").toUpperCase()} services
+                        {compareAllCarriers
+                          ? "All carriers · sorted by cost"
+                          : (pickedCarrier ?? "").toUpperCase() + " services"}
                         {ratesLoading && (
                           <span className="inline-flex items-center gap-1 normal-case tracking-normal text-gr-green-dark font-semibold">
                             <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -2236,6 +2277,17 @@ export default function PendingShipmentsWork() {
                           </span>
                         )}
                       </label>
+                      {/* Compare-all toggle. Off = current per-carrier
+                          view. On = cross-carrier rate shopping (backend
+                          parallelizes + caches so wall-clock stays sane). */}
+                      <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={compareAllCarriers}
+                          onChange={(e) => setCompareAllCarriers(e.target.checked)}
+                        />
+                        <span>Compare all carriers</span>
+                      </label>
                     </div>
                     <div className="border border-slate-200 rounded max-h-56 overflow-y-auto relative">
                       {ratesLoading && rates.length === 0 && (
@@ -2244,7 +2296,9 @@ export default function PendingShipmentsWork() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                           </svg>
-                          <div className="text-xs text-gray-500">Getting {pickedCarrier.toUpperCase()} rates…</div>
+                          <div className="text-xs text-gray-500">
+                            Getting {compareAllCarriers ? "all carrier" : (pickedCarrier ?? "").toUpperCase()} rates…
+                          </div>
                         </div>
                       )}
                       {ratesLoading && rates.length > 0 && (
@@ -2264,21 +2318,46 @@ export default function PendingShipmentsWork() {
                         <table className="w-full text-sm">
                           <thead className="bg-slate-50 text-slate-700 text-xs uppercase tracking-wider">
                             <tr>
+                              {compareAllCarriers && (
+                                <th className="text-left px-2 py-1">Carrier</th>
+                              )}
                               <th className="text-left px-2 py-1">Service</th>
                               <th className="text-right px-2 py-1">Transit</th>
                               <th className="text-right px-2 py-1">Cost</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {rates.map((r) => {
-                              const isPicked = r.serviceCode === pickedService;
+                            {(compareAllCarriers
+                              ? [...rates].sort((a, b) => (a.shipmentCost + a.otherCost) - (b.shipmentCost + b.otherCost))
+                              : rates
+                            ).map((r) => {
+                              // In compare mode a row matches only if
+                              // BOTH carrier + service match — same
+                              // serviceCode can exist across carriers.
+                              const isPicked = compareAllCarriers
+                                ? r.carrierCode === pickedCarrier && r.serviceCode === pickedService
+                                : r.serviceCode === pickedService;
                               const total = r.shipmentCost + r.otherCost;
                               return (
                                 <tr
-                                  key={r.serviceCode}
-                                  onClick={() => setPickedService(r.serviceCode)}
+                                  key={`${r.carrierCode}-${r.serviceCode}`}
+                                  onClick={() => {
+                                    // In compare mode picking a row
+                                    // also switches carriers — the
+                                    // shipper is committing to that
+                                    // whole rate, not just the service.
+                                    if (compareAllCarriers && r.carrierCode) {
+                                      setPickedCarrier(r.carrierCode);
+                                    }
+                                    setPickedService(r.serviceCode);
+                                  }}
                                   className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${isPicked ? "bg-gr-mint-100" : ""}`}
                                 >
+                                  {compareAllCarriers && (
+                                    <td className="px-2 py-1 text-gray-700 whitespace-nowrap font-mono text-xs">
+                                      {(r.carrierCode ?? "").toUpperCase()}
+                                    </td>
+                                  )}
                                   <td className="px-2 py-1 text-gr-black">{r.serviceName || r.serviceCode}</td>
                                   <td
                                     className="px-2 py-1 text-right text-gray-600 whitespace-nowrap"
