@@ -465,6 +465,108 @@ export default function PendingShipmentsWork() {
   // wary auto-print on a new tab.
   const labelIframeRef = useRef<HTMLIFrameElement | null>(null);
 
+  // KAN-44 Phase A — split shipments state.
+  // Each SplitShipment carries its own carrier/service/box/weight/insurance
+  // plus the indices of pickerRow.items that belong to it. When splitMode
+  // is on, the confirm modal renders one card per shipment and the print
+  // button posts to /shipping/print-split. When off, the current single-
+  // shipment path is unchanged.
+  type SplitShipment = {
+    itemIndices: number[]; // indices into pickerRow.items
+    weightLb: string;
+    weightOz: string;
+    packageCode: string;
+    pickedCarrier: string | null;
+    pickedService: string | null;
+    confirmation: string;
+    insuranceAmount: string;
+    insuranceProvider: string;
+  };
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitShipments, setSplitShipments] = useState<SplitShipment[]>([]);
+  // Per-shipment print results — grows as split-print progresses.
+  const [splitResults, setSplitResults] = useState<Array<{
+    index: number;
+    success: boolean;
+    trackingNumber?: string | null;
+    carrierCode?: string | null;
+    labelDataUrl?: string | null;
+    error?: string;
+  }>>([]);
+
+  const blankSplitShipment = (): SplitShipment => ({
+    itemIndices: [],
+    weightLb: "",
+    weightOz: "",
+    packageCode: "package",
+    pickedCarrier: pickedCarrier, // seed from single-shipment defaults
+    pickedService: pickedService,
+    confirmation: "none",
+    insuranceAmount: "",
+    insuranceProvider: "carrier",
+  });
+
+  // Enter split mode: seed with 2 shipments and half the items in each.
+  // Shipper immediately sees a workable starting state.
+  const enterSplitMode = () => {
+    if (!pickerRow) return;
+    const n = pickerRow.items.length;
+    const half = Math.ceil(n / 2);
+    const a = blankSplitShipment();
+    const b = blankSplitShipment();
+    a.itemIndices = Array.from({ length: half }, (_, i) => i);
+    b.itemIndices = Array.from({ length: n - half }, (_, i) => half + i);
+    setSplitShipments([a, b]);
+    setSplitMode(true);
+  };
+
+  const exitSplitMode = () => {
+    setSplitMode(false);
+    setSplitShipments([]);
+    setSplitResults([]);
+  };
+
+  // Move an item to a specific shipment (removes from all others). If
+  // toShipment === -1, item becomes unallocated. Handles reassignment.
+  const assignItemToShipment = (itemIndex: number, toShipment: number) => {
+    setSplitShipments((prev) =>
+      prev.map((s, i) => ({
+        ...s,
+        itemIndices:
+          i === toShipment
+            ? Array.from(new Set([...s.itemIndices, itemIndex])).sort((a, b) => a - b)
+            : s.itemIndices.filter((x) => x !== itemIndex),
+      }))
+    );
+  };
+
+  const addSplitShipment = () => {
+    setSplitShipments((prev) => [...prev, blankSplitShipment()]);
+  };
+
+  const removeSplitShipment = (index: number) => {
+    setSplitShipments((prev) => {
+      if (prev.length <= 2) return prev; // 2 minimum in split mode
+      const removed = prev[index];
+      const rest = prev.filter((_, i) => i !== index);
+      // Reassign any items from the removed shipment to shipment 0 so
+      // they don't silently vanish. Ops can move them again if needed.
+      if (removed.itemIndices.length > 0 && rest[0]) {
+        rest[0] = {
+          ...rest[0],
+          itemIndices: Array.from(new Set([...rest[0].itemIndices, ...removed.itemIndices])).sort(
+            (a, b) => a - b
+          ),
+        };
+      }
+      return rest;
+    });
+  };
+
+  const updateSplitShipment = (index: number, patch: Partial<SplitShipment>) => {
+    setSplitShipments((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+  };
+
   const openPicker = (row: WorkRow) => {
     setPickerRow(row);
     setPicks({});
@@ -875,6 +977,124 @@ export default function PendingShipmentsWork() {
   const closePrintResult = () => {
     if (printResult?.labelDataUrl) URL.revokeObjectURL(printResult.labelDataUrl);
     setPrintResult(null);
+    closePicker();
+  };
+
+  // KAN-44 Phase A — split-print handler. Validates every shipment
+  // has at least 1 item + a weight + a carrier/service, then posts
+  // once to /shipping/print-split. The backend prints sequentially
+  // and returns a per-shipment result array; we render it into the
+  // splitResults state (with one label preview per success).
+  const fireSplitPrint = async () => {
+    if (!pickerRow) return;
+    setPrintError(null);
+
+    // Client-side validation — every item must be allocated to
+    // exactly one shipment; every shipment needs its own carrier +
+    // service + weight.
+    const totalItems = pickerRow.items.length;
+    const assigned = new Set<number>();
+    for (const s of splitShipments) for (const i of s.itemIndices) assigned.add(i);
+    if (assigned.size !== totalItems) {
+      setPrintError(`Every item must be assigned to a shipment. ${totalItems - assigned.size} unassigned.`);
+      return;
+    }
+    for (let i = 0; i < splitShipments.length; i++) {
+      const s = splitShipments[i];
+      if (s.itemIndices.length === 0) {
+        setPrintError(`Shipment ${i + 1} has no items — remove it or move items into it.`);
+        return;
+      }
+      const wOz = (Number(s.weightLb) || 0) * 16 + (Number(s.weightOz) || 0);
+      if (wOz <= 0) {
+        setPrintError(`Shipment ${i + 1}: enter a weight (lb and/or oz).`);
+        return;
+      }
+      if (!s.pickedCarrier || !s.pickedService) {
+        setPrintError(`Shipment ${i + 1}: pick a carrier and service.`);
+        return;
+      }
+    }
+
+    // Build the payload — each shipment's inventoryIds come from
+    // picks[itemIndex].id. If any picked slot is missing an inventory
+    // pick, error like the single-shipment path does.
+    const payloadShipments = splitShipments.map((s) => {
+      const inventoryIds = s.itemIndices.map((i) => picks[i]?.id).filter(Boolean) as number[];
+      if (inventoryIds.length !== s.itemIndices.length) {
+        throw new Error("One or more items don't have an inventory pick.");
+      }
+      const insurance = Number(s.insuranceAmount) || 0;
+      return {
+        inventoryIds,
+        weightOz: (Number(s.weightLb) || 0) * 16 + (Number(s.weightOz) || 0),
+        carrierCode: s.pickedCarrier,
+        serviceCode: s.pickedService,
+        packageCode: s.packageCode,
+        confirmation: s.confirmation,
+        ...(insurance > 0
+          ? { insuranceAmount: insurance, insuranceProvider: s.insuranceProvider }
+          : {}),
+      };
+    });
+
+    setPrinting(true);
+    try {
+      const resp = await fetch(`${apiEndpoint}/shipping/print-split`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: pickerRow.order.orderId,
+          shipments: payloadShipments,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok && !Array.isArray(data.shipments)) {
+        throw new Error(data.error ?? `HTTP ${resp.status}`);
+      }
+      // Success/partial: render one result card per shipment. Backend
+      // returns { success, shipments: [{index, success, trackingNumber,
+      // labelData, ...}] }.
+      const perShipment = (data.shipments as any[]).map((r) => {
+        let labelDataUrl: string | null = null;
+        if (r.success && r.labelData) {
+          const binary = atob(r.labelData);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], { type: "application/pdf" });
+          labelDataUrl = URL.createObjectURL(blob);
+        }
+        return {
+          index: r.index,
+          success: !!r.success,
+          trackingNumber: r.trackingNumber ?? null,
+          carrierCode: r.carrierCode ?? null,
+          labelDataUrl,
+          error: r.error,
+        };
+      });
+      setSplitResults(perShipment);
+
+      // Optimistic list update — if every shipment succeeded, drop
+      // the row from pending. If any failed, leave it (ops needs to
+      // see it to retry the remaining subset from a fresh call).
+      if (data.success === true) {
+        setShipments((prev) => prev.filter((s) => s.orderId !== pickerRow.order.orderId));
+      }
+    } catch (e) {
+      setPrintError((e as Error).message ?? "Split print failed");
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  // Cleanup labelDataUrls when the split result panel closes.
+  const closeSplitResult = () => {
+    for (const r of splitResults) {
+      if (r.labelDataUrl) URL.revokeObjectURL(r.labelDataUrl);
+    }
+    setSplitResults([]);
+    exitSplitMode();
     closePicker();
   };
 
@@ -1327,6 +1547,43 @@ export default function PendingShipmentsWork() {
                     </span>
                   </div>
                 )}
+
+                {/* KAN-44 Phase A — split-shipment toggle. Visible for
+                    multi-item orders (single-item can't be split).
+                    OFF: the current single-shipment UI below is rendered
+                    as-is. ON: the single-shipment UI hides and the
+                    split panel below takes over. */}
+                {pickerRow.items.length >= 2 && (
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+                    <div className="text-xs text-gray-600">
+                      This order has {pickerRow.items.length} items.
+                    </div>
+                    {!splitMode ? (
+                      <button
+                        type="button"
+                        onClick={enterSplitMode}
+                        className="ml-auto text-xs px-2 py-1 rounded border border-purple-300 bg-purple-50 text-purple-800 hover:bg-purple-100"
+                      >
+                        Split into multiple shipments →
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={exitSplitMode}
+                        className="ml-auto text-xs px-2 py-1 rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                      >
+                        ← Back to single shipment
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* KAN-44 — single-shipment wrapper. hidden={splitMode}
+                    keeps the existing single-shipment UI intact and just
+                    toggles its visibility. Closing div is marked with
+                    "/single-shipment wrapper" for grep. */}
+                <div className="space-y-3" hidden={splitMode}>
+
                 {/* Ship-to + inventory summary. Now shows the full
                     address (street1/2/3, not just city/state) so
                     shippers can spot label-breaking addresses BEFORE
@@ -1876,6 +2133,247 @@ export default function PendingShipmentsWork() {
                     {printing ? "Printing…" : "Confirm & Print"}
                   </button>
                 </div>
+                </div>{/* /single-shipment wrapper — KAN-44 */}
+
+                {/* KAN-44 Phase A — split-mode panel. Renders instead
+                    of the single-shipment controls above when splitMode
+                    is on. Each SplitShipment card lets the shipper pick
+                    which items go in that shipment + its own carrier /
+                    service / package / weight / signature / insurance.
+                    On print: one POST to /shipping/print-split. */}
+                {splitMode && (
+                  <div className="space-y-3">
+                    {splitShipments.map((s, si) => {
+                      const totalItems = pickerRow.items.length;
+                      const w = (Number(s.weightLb) || 0) * 16 + (Number(s.weightOz) || 0);
+                      return (
+                        <div key={si} className="border border-purple-300 bg-purple-50/40 rounded-lg p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm font-bold text-purple-900">
+                              Shipment {si + 1} ·{" "}
+                              <span className="font-normal text-purple-700">
+                                {s.itemIndices.length}/{totalItems} items
+                              </span>
+                            </div>
+                            {splitShipments.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => removeSplitShipment(si)}
+                                className="text-xs text-red-700 hover:underline"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Item allocation — every item in the order
+                              renders as a chip. The chip is highlighted
+                              on the shipment card it currently belongs
+                              to. Click on another shipment's card to
+                              move the item there (see the "Move here"
+                              links below). */}
+                          <div className="flex flex-wrap gap-1">
+                            {pickerRow.items.map((it, ii) => {
+                              const isHere = s.itemIndices.includes(ii);
+                              return (
+                                <button
+                                  key={ii}
+                                  type="button"
+                                  onClick={() => assignItemToShipment(ii, si)}
+                                  className={
+                                    "text-[10px] px-1.5 py-0.5 rounded border " +
+                                    (isHere
+                                      ? "bg-purple-600 text-white border-purple-700"
+                                      : "bg-white text-gray-500 border-gray-300 hover:bg-purple-100")
+                                  }
+                                  title={isHere ? "Already in this shipment" : "Move to this shipment"}
+                                >
+                                  {isHere ? "✓ " : ""}
+                                  {it.name?.slice(0, 30) ?? `Item ${ii + 1}`}
+                                  {(it.quantity ?? 0) > 1 ? ` ×${it.quantity}` : ""}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Per-shipment controls — carrier + service +
+                              package + weight + signature + insurance.
+                              Compact grid, one row per concern. */}
+                          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-purple-200">
+                            <div>
+                              <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">Carrier</label>
+                              <select
+                                value={s.pickedCarrier ?? ""}
+                                onChange={(e) => updateSplitShipment(si, { pickedCarrier: e.target.value || null, pickedService: null })}
+                                className="w-full text-xs border border-gray-300 rounded px-1.5 py-1"
+                              >
+                                <option value="">— pick —</option>
+                                {carriers.map((c) => (
+                                  <option key={c.code} value={c.code}>{c.name || c.code}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">Service</label>
+                              <select
+                                value={s.pickedService ?? ""}
+                                onChange={(e) => updateSplitShipment(si, { pickedService: e.target.value || null })}
+                                disabled={!s.pickedCarrier}
+                                className="w-full text-xs border border-gray-300 rounded px-1.5 py-1 disabled:bg-slate-100"
+                              >
+                                <option value="">— pick —</option>
+                                {services.map((sv) => (
+                                  <option key={sv.code} value={sv.code}>{sv.name || sv.code}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">Package</label>
+                              <select
+                                value={s.packageCode}
+                                onChange={(e) => updateSplitShipment(si, { packageCode: e.target.value })}
+                                className="w-full text-xs border border-gray-300 rounded px-1.5 py-1"
+                              >
+                                {packages.length === 0 && <option value="package">package</option>}
+                                {packages.map((p) => (
+                                  <option key={p.code} value={p.code}>{p.name || p.code}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">Signature</label>
+                              <select
+                                value={s.confirmation}
+                                onChange={(e) => updateSplitShipment(si, { confirmation: e.target.value })}
+                                className="w-full text-xs border border-gray-300 rounded px-1.5 py-1"
+                              >
+                                <option value="none">None</option>
+                                <option value="delivery">Delivery Confirmation</option>
+                                <option value="signature">Signature Required</option>
+                                <option value="adult_signature">Adult Signature</option>
+                                <option value="direct_signature">Direct (FedEx)</option>
+                              </select>
+                            </div>
+                            <div className="col-span-2">
+                              <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">
+                                Weight (lb / oz) {w > 0 && <span className="text-gray-400 ml-1">= {w.toFixed(1)} oz</span>}
+                              </label>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number" step="1" min="0"
+                                  value={s.weightLb}
+                                  onChange={(e) => updateSplitShipment(si, { weightLb: e.target.value })}
+                                  className="w-14 text-xs border border-gray-300 rounded px-1.5 py-1"
+                                />
+                                <span className="text-[10px] text-gray-600">lb</span>
+                                <input
+                                  type="number" step="0.1" min="0" max="15.9"
+                                  value={s.weightOz}
+                                  onChange={(e) => updateSplitShipment(si, { weightOz: e.target.value })}
+                                  className="w-14 text-xs border border-gray-300 rounded px-1.5 py-1"
+                                />
+                                <span className="text-[10px] text-gray-600">oz</span>
+                              </div>
+                            </div>
+                            <div className="col-span-2">
+                              <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">
+                                Insurance ($, optional)
+                              </label>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number" step="1" min="0"
+                                  value={s.insuranceAmount}
+                                  onChange={(e) => updateSplitShipment(si, { insuranceAmount: e.target.value })}
+                                  className="w-24 text-xs border border-gray-300 rounded px-1.5 py-1"
+                                  placeholder="0"
+                                />
+                                <select
+                                  value={s.insuranceProvider}
+                                  onChange={(e) => updateSplitShipment(si, { insuranceProvider: e.target.value })}
+                                  className="text-xs border border-gray-300 rounded px-1.5 py-1"
+                                >
+                                  <option value="carrier">Carrier</option>
+                                  <option value="shipsurance">Shipsurance</option>
+                                  <option value="xcover">XCover</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    <button
+                      type="button"
+                      onClick={addSplitShipment}
+                      className="w-full text-xs px-3 py-2 rounded border border-dashed border-purple-400 text-purple-700 hover:bg-purple-50"
+                    >
+                      + Add another shipment
+                    </button>
+
+                    {printError && (
+                      <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                        {printError}
+                      </div>
+                    )}
+
+                    {splitResults.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">Results</div>
+                        {splitResults.map((r) => (
+                          <div
+                            key={r.index}
+                            className={
+                              "text-xs p-2 rounded border " +
+                              (r.success
+                                ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                                : "bg-red-50 border-red-200 text-red-800")
+                            }
+                          >
+                            <div className="font-bold">
+                              Shipment {r.index + 1}: {r.success ? "printed" : "FAILED"}
+                            </div>
+                            {r.success && r.trackingNumber && (
+                              <div className="font-mono">{r.carrierCode} · {r.trackingNumber}</div>
+                            )}
+                            {!r.success && r.error && <div>{r.error}</div>}
+                            {r.labelDataUrl && (
+                              <a
+                                href={r.labelDataUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-emerald-700 underline mt-1 inline-block"
+                              >
+                                Open label PDF
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-2 pt-2">
+                      <button
+                        onClick={splitResults.length > 0 ? closeSplitResult : exitSplitMode}
+                        disabled={printing}
+                        className="px-3 py-2 rounded border border-gray-300 text-gr-black text-sm hover:bg-slate-50 disabled:opacity-40"
+                      >
+                        {splitResults.length > 0 ? "Done" : "Cancel"}
+                      </button>
+                      <button
+                        onClick={fireSplitPrint}
+                        disabled={printing || splitResults.length > 0}
+                        className="px-3 py-2 rounded bg-purple-700 text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
+                      >
+                        {printing
+                          ? "Printing…"
+                          : splitResults.length > 0
+                            ? "Done"
+                            : `Print ${splitShipments.length} labels`}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               /* STAGE 1: Picker — one section per line item in the order. */
