@@ -507,10 +507,12 @@ export default function PendingShipmentsWork() {
   const recommendedRate = useMemo(() => {
     if (rates.length === 0) return null;
     const eligible = rates.filter((r) => {
-      // Unknown transit is inconclusive — treat as eligible so we
-      // don't drop e.g. FedEx SmartPost from consideration just
-      // because ShipStation returned null.
-      if (r.transitDays == null) return true;
+      // Null transit = INELIGIBLE for auto-recommendation. Services
+      // like FedEx SmartPost / Ground Economy report null but are
+      // genuinely 7-10d actual — recommending them "because they're
+      // cheapest" ships slower than the buyer's promise. Ops can
+      // still pick them manually from the rate table.
+      if (r.transitDays == null) return false;
       return r.transitDays <= maxTransitDays;
     });
     if (eligible.length === 0) return null;
@@ -2337,6 +2339,14 @@ export default function PendingShipmentsWork() {
                       // Reset service — the new carrier has its own
                       // service list.
                       setPickedService(null);
+                      // Ops manually chose a carrier — stop the
+                      // recommendation auto-apply from reverting it.
+                      // Without this, the effect at ~line 570 sees
+                      // (pickedCarrier != recommendation.carrierCode)
+                      // and immediately writes the recommendation
+                      // back — locking the shipper out of the
+                      // dropdown ("clicking it does nothing").
+                      setRateManuallyOverridden(true);
                     }}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
                   >
