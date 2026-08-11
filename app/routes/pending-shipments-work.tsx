@@ -821,6 +821,12 @@ export default function PendingShipmentsWork() {
             weightOz: totalOz,
             packageCode,
             residential,
+            // Sending FE's confirmation keeps the rate quote in sync
+            // with what will actually print. Without it the backend
+            // falls back to the marketplace-imported value, which
+            // produces mismatches like "quote shows signature cost
+            // but the dropdown says None" (Adam, 2026-08-11).
+            confirmation,
             ...carrierCodesPayload,
             ...(dims ? { dimensions: dims } : {}),
             ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider } : {}),
@@ -843,7 +849,7 @@ export default function PendingShipmentsWork() {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, carriers]);
+  }, [apiEndpoint, pickerRow, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, confirmation, carriers]);
 
   // Rules-engine defaults — fetched on picker open (prefetch). Every
   // matching rule's actions get merged into a bundle; we apply each
