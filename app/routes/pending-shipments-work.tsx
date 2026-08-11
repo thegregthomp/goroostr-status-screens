@@ -535,6 +535,30 @@ export default function PendingShipmentsWork() {
     if (recommendedRate.carrierCode) setPickedCarrier(recommendedRate.carrierCode);
     setPickedService(recommendedRate.serviceCode);
   };
+
+  // Auto-apply the recommendation exactly ONCE per confirm-modal open
+  // — same UX pattern as the rules engine (auto-picks defaults, ops
+  // overrides freely by clicking any row). Fires the first time rates
+  // load. Doesn't re-fire when ops changes weight/package/etc.
+  //
+  // `rateManuallyOverridden` gets flipped when ops clicks any row in
+  // the rate table — after that, we hide the recommendation chip so
+  // it stops nagging on a deliberate override.
+  const recommendationAppliedRef = useRef(false);
+  const [rateManuallyOverridden, setRateManuallyOverridden] = useState(false);
+  useEffect(() => {
+    if (!confirmMode) {
+      recommendationAppliedRef.current = false;
+      setRateManuallyOverridden(false);
+    }
+  }, [confirmMode]);
+  useEffect(() => {
+    if (!recommendedRate) return;
+    if (recommendationAppliedRef.current) return;
+    recommendationAppliedRef.current = true;
+    if (recommendedRate.carrierCode) setPickedCarrier(recommendedRate.carrierCode);
+    setPickedService(recommendedRate.serviceCode);
+  }, [recommendedRate]);
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printResult, setPrintResult] = useState<{
@@ -2321,7 +2345,7 @@ export default function PendingShipmentsWork() {
                     than the recommendation. If the pick already IS
                     the recommendation, we hide the chip to avoid
                     nagging. */}
-                {recommendedRate && (() => {
+                {recommendedRate && !rateManuallyOverridden && (() => {
                   const recTotal = recommendedRate.shipmentCost + recommendedRate.otherCost;
                   const isAlreadyPicked =
                     recommendedRate.carrierCode === pickedCarrier &&
@@ -2458,6 +2482,10 @@ export default function PendingShipmentsWork() {
                                       setPickedCarrier(r.carrierCode);
                                     }
                                     setPickedService(r.serviceCode);
+                                    // Suppress the recommendation chip
+                                    // once ops has deliberately picked
+                                    // — no nagging on informed choice.
+                                    setRateManuallyOverridden(true);
                                   }}
                                   className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${isPicked ? "bg-gr-mint-100" : ""}`}
                                 >
