@@ -517,6 +517,16 @@ export default function PendingShipmentsWork() {
   // ~slowest single carrier, not the sum.
   const [compareAllCarriers, setCompareAllCarriers] = useState<boolean>(false);
 
+  // Rate-history hint (2026-08-11) — median postage for the picked
+  // SKU + destination state across recent successful ships. Null
+  // when there aren't enough samples (<3) OR when we haven't fetched
+  // yet. Powers a small "usually ~$X" line under the rate table so
+  // ops has a benchmark for whether the current rate is normal.
+  const [rateHistory, setRateHistory] = useState<{
+    count: number;
+    stats: { median: number; min: number; max: number } | null;
+  } | null>(null);
+
   // Buyer's transit expectation derived from the marketplace-requested
   // service or order tags. Powers the recommendation chip — the goal
   // is "cheapest that gets there in time," not "cheapest overall."
@@ -642,6 +652,34 @@ export default function PendingShipmentsWork() {
   useEffect(() => {
     if (!confirmMode) setRateManuallyOverridden(false);
   }, [confirmMode]);
+
+  // Rate-history fetch — as soon as we know a SKU + shipTo state,
+  // pull the median cost for that pair from shipping_activity. Runs
+  // once per pickerRow open; result is stable across the session so
+  // no need to re-fetch on weight/carrier changes.
+  useEffect(() => {
+    setRateHistory(null);
+    if (!pickerRow) return;
+    const sku = pickerRow.items?.[0]?.sku ?? null;
+    const state = pickerRow.order?.shipTo?.state ?? null;
+    if (!sku) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const qs = new URLSearchParams({ sku });
+        if (state) qs.set("state", state);
+        const resp = await authFetch(`${spaEndpoint}/shipping/sku-cost-history?${qs.toString()}`);
+        const data = await resp.json();
+        if (cancelled) return;
+        if (data.success !== false) {
+          setRateHistory({ count: data.count ?? 0, stats: data.stats ?? null });
+        }
+      } catch {
+        /* non-fatal — hint just doesn't render */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [spaEndpoint, pickerRow]);
   useEffect(() => {
     if (!recommendedRate) return;
     if (rateManuallyOverridden) return;
@@ -1178,6 +1216,9 @@ export default function PendingShipmentsWork() {
           ...(dims ? { dimensions: dims } : {}),
           ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider } : {}),
           ...(recCost !== null && recCost > 0 ? { recommendedRateCost: recCost } : {}),
+          ...(pickerRow.order.shipTo?.state
+            ? { destState: pickerRow.order.shipTo.state }
+            : {}),
         }),
       });
       const data = await resp.json();
@@ -2601,6 +2642,23 @@ export default function PendingShipmentsWork() {
                     </div>
                   );
                 })()}
+
+                {/* Rate-history hint — "usually ~$18 across 12 past
+                    ships." Signals what "normal" looks like so ops
+                    catches an outlier rate before printing. Only
+                    shows when we have >=3 past samples for the SKU. */}
+                {rateHistory && rateHistory.stats && (
+                  <div className="text-[11px] text-gray-600 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                    <span>📈</span>
+                    <span>
+                      This SKU {pickerRow.order.shipTo?.state ? `to ${pickerRow.order.shipTo.state}` : ""} usually ships for{" "}
+                      <span className="font-bold text-gr-black">${rateHistory.stats.median.toFixed(2)}</span>{" "}
+                      <span className="text-gray-500">
+                        (range ${rateHistory.stats.min.toFixed(2)}–${rateHistory.stats.max.toFixed(2)} · {rateHistory.count} past ships)
+                      </span>
+                    </span>
+                  </div>
+                )}
 
                 {/* Rate table. Per-carrier mode = single carrier's
                     services. Compare-all mode = every whitelisted
