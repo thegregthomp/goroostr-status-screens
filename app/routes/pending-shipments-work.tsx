@@ -536,29 +536,33 @@ export default function PendingShipmentsWork() {
     setPickedService(recommendedRate.serviceCode);
   };
 
-  // Auto-apply the recommendation exactly ONCE per confirm-modal open
-  // — same UX pattern as the rules engine (auto-picks defaults, ops
-  // overrides freely by clicking any row). Fires the first time rates
-  // load. Doesn't re-fire when ops changes weight/package/etc.
+  // Auto-apply the recommendation, and RE-apply it if something else
+  // clobbers the pick. The rules-engine defaults fetch
+  // (/shipping/recommended-defaults) and the rate fetch race — if
+  // rates land first, we set picked → recommendation, then rules-engine
+  // resolves and setPickedCarrier's back to the marketplace default.
+  // Bug repro'd in prod: recommendation chip says UPS but pickedCarrier
+  // stuck on FedEx because rules-engine won the race after our
+  // one-shot ref bailed out.
   //
-  // `rateManuallyOverridden` gets flipped when ops clicks any row in
-  // the rate table — after that, we hide the recommendation chip so
-  // it stops nagging on a deliberate override.
-  const recommendationAppliedRef = useRef(false);
+  // Instead of a one-shot ref, watch for drift: any time
+  // (pickedCarrier, pickedService) doesn't match the recommendation,
+  // re-apply — unless ops explicitly clicked a rate row
+  // (rateManuallyOverridden), in which case their choice sticks.
   const [rateManuallyOverridden, setRateManuallyOverridden] = useState(false);
   useEffect(() => {
-    if (!confirmMode) {
-      recommendationAppliedRef.current = false;
-      setRateManuallyOverridden(false);
-    }
+    if (!confirmMode) setRateManuallyOverridden(false);
   }, [confirmMode]);
   useEffect(() => {
     if (!recommendedRate) return;
-    if (recommendationAppliedRef.current) return;
-    recommendationAppliedRef.current = true;
+    if (rateManuallyOverridden) return;
+    const matches =
+      recommendedRate.carrierCode === pickedCarrier &&
+      recommendedRate.serviceCode === pickedService;
+    if (matches) return;
     if (recommendedRate.carrierCode) setPickedCarrier(recommendedRate.carrierCode);
     setPickedService(recommendedRate.serviceCode);
-  }, [recommendedRate]);
+  }, [recommendedRate, pickedCarrier, pickedService, rateManuallyOverridden]);
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printResult, setPrintResult] = useState<{
@@ -768,7 +772,14 @@ export default function PendingShipmentsWork() {
   // (fast but no comparison): user sees every service for the carrier
   // as a table, clicks one to select. Debounced 300ms.
   useEffect(() => {
-    if (!pickerRow || !confirmMode) return;
+    // Fires on picker open — NOT gated on confirmMode. The pickerRow
+    // → confirmMode gap is 10-30s of ops clicking through the inventory
+    // picker, and burning that time to prefetch rates makes the confirm
+    // modal feel instant (rate call is the slow one). If ops cancels
+    // out of picker before hitting Confirm, we've paid for a rate call
+    // + burned some ShipStation rate-limit budget but warmed the cache
+    // for the next open.
+    if (!pickerRow) return;
     // In compare-all mode we don't need a picked carrier — the query
     // asks for every whitelisted one. In per-carrier mode, no carrier
     // = no rate query.
@@ -830,15 +841,15 @@ export default function PendingShipmentsWork() {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, carriers]);
+  }, [apiEndpoint, pickerRow, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, carriers]);
 
-  // Rules-engine defaults — fetched on confirm-mode open. Every
+  // Rules-engine defaults — fetched on picker open (prefetch). Every
   // matching rule's actions get merged into a bundle; we apply each
   // key to the corresponding confirm-modal state so the shipper
   // sees rule-picked values without typing. They can still override
   // any of them by hand — rules just set the initial state.
   useEffect(() => {
-    if (!pickerRow || !confirmMode || !pickerRow.order.orderId) return;
+    if (!pickerRow || !pickerRow.order.orderId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -867,7 +878,7 @@ export default function PendingShipmentsWork() {
       }
     })();
     return () => { cancelled = true; };
-  }, [apiEndpoint, pickerRow, confirmMode]);
+  }, [apiEndpoint, pickerRow]);
 
   // Weight-from-history — when confirm mode opens, look up each
   // picked SKU's median weight in sku_weight_averages and pre-fill
@@ -876,7 +887,10 @@ export default function PendingShipmentsWork() {
   // a single-sample outlier. Overwrites whatever the order's own
   // marketplace weight was — SKU-history median is more accurate.
   useEffect(() => {
-    if (!pickerRow || !confirmMode) return;
+    // Prefetch on picker open — weight-from-history feeds the rate
+    // effect above, so firing this early lets rates start loading
+    // before ops even sees the confirm modal.
+    if (!pickerRow) return;
     const skus = pickerRow.items
       .map((it) => it.sku)
       .filter(Boolean)
@@ -911,11 +925,13 @@ export default function PendingShipmentsWork() {
     return () => { cancelled = true; };
     // Re-runs when picks change (items[] changes shape only if the
     // shipper re-picks, which happens back in Stage 1 not confirm).
-  }, [apiEndpoint, pickerRow, confirmMode]);
+  }, [apiEndpoint, pickerRow]);
 
-  // Fetch the account's configured carriers when confirm-mode opens.
+  // Fetch the account's configured carriers on picker open (prefetch
+  // — the rate effect gates on carriers.length, so firing this early
+  // unblocks rates during picker stage).
   useEffect(() => {
-    if (!confirmMode) return;
+    if (!pickerRow) return;
     let cancelled = false;
     setCarriersLoading(true);
     (async () => {
@@ -933,7 +949,7 @@ export default function PendingShipmentsWork() {
       }
     })();
     return () => { cancelled = true; };
-  }, [apiEndpoint, confirmMode]);
+  }, [apiEndpoint, pickerRow]);
 
   // Fetch services for the currently-picked carrier so the service
   // dropdown offers real per-account options (not hardcoded).
