@@ -549,14 +549,12 @@ export default function PendingShipmentsWork() {
     (pickerRow?.order as any)?.advancedOptions?.source ??
     ""
   ).toString().toLowerCase();
-  const recommendedRate = useMemo(() => {
+  // Returns { rate, reasons[] } — the reason strings render on the
+  // chip so ops sees WHY this pick, not just what. Null when rates
+  // are empty or nothing meets the transit budget.
+  const recommendation = useMemo(() => {
     if (rates.length === 0) return null;
     const eligible = rates.filter((r) => {
-      // Null transit = INELIGIBLE for auto-recommendation. Services
-      // like FedEx SmartPost / Ground Economy report null but are
-      // genuinely 7-10d actual — recommending them "because they're
-      // cheapest" ships slower than the buyer's promise. Ops can
-      // still pick them manually from the rate table.
       if (r.transitDays == null) return false;
       return r.transitDays <= maxTransitDays;
     });
@@ -565,8 +563,6 @@ export default function PendingShipmentsWork() {
     const isUsps = (r: typeof eligible[number]) => r.carrierCode === "stamps_com";
     const totalOf = (r: typeof eligible[number]) => r.shipmentCost + r.otherCost;
 
-    // Cheapest overall + cheapest non-USPS (needed for the USPS $1
-    // margin check + fallback when USPS is disqualified).
     const cheapest = eligible.reduce((best, r) =>
       totalOf(r) < totalOf(best) ? r : best
     );
@@ -575,18 +571,44 @@ export default function PendingShipmentsWork() {
       ? nonUspsEligible.reduce((best, r) => (totalOf(r) < totalOf(best) ? r : best))
       : null;
 
-    if (!isUsps(cheapest)) return cheapest;
+    const reasons: string[] = [];
+    reasons.push(`cheapest that meets buyer's ~${maxTransitDays}d promise`);
 
-    // USPS gate: only if under $300 AND eBay AND >=$1 cheaper.
-    const uspsAllowedByOrder =
-      orderTotalForRec > 0 && orderTotalForRec < 300 && marketplaceForRec === "ebay";
-    const uspsCheaperByEnough =
-      !cheapestNonUsps || totalOf(cheapestNonUsps) - totalOf(cheapest) >= 1.0;
+    let picked = cheapest;
+    if (isUsps(cheapest)) {
+      // USPS gate: under $300 AND eBay AND >=$1 cheaper.
+      const uspsAllowedByOrder =
+        orderTotalForRec > 0 && orderTotalForRec < 300 && marketplaceForRec === "ebay";
+      const uspsCheaperByEnough =
+        !cheapestNonUsps || totalOf(cheapestNonUsps) - totalOf(cheapest) >= 1.0;
 
-    if (uspsAllowedByOrder && uspsCheaperByEnough) return cheapest;
-    // Fallback: cheapest non-USPS if USPS didn't qualify.
-    return cheapestNonUsps ?? cheapest;
+      if (uspsAllowedByOrder && uspsCheaperByEnough) {
+        picked = cheapest;
+        reasons.push("USPS OK: eBay + under $300");
+        if (cheapestNonUsps) {
+          const diff = totalOf(cheapestNonUsps) - totalOf(cheapest);
+          reasons.push(`$${diff.toFixed(2)} cheaper than ${cheapestNonUsps.serviceName || cheapestNonUsps.serviceCode}`);
+        }
+      } else if (cheapestNonUsps) {
+        // USPS was cheapest but disqualified — fall back + explain.
+        picked = cheapestNonUsps;
+        const why: string[] = [];
+        if (!uspsAllowedByOrder) {
+          if (marketplaceForRec !== "ebay") why.push("not eBay");
+          if (orderTotalForRec >= 300) why.push("over $300");
+        }
+        if (!uspsCheaperByEnough) why.push("not $1+ cheaper");
+        reasons.push(`skipped USPS (${why.join(", ")})`);
+      }
+    }
+
+    return { rate: picked, reasons };
   }, [rates, maxTransitDays, orderTotalForRec, marketplaceForRec]);
+
+  // Back-compat alias — most sites still use `recommendedRate` and
+  // treating it as a rate row keeps existing checks (isAlreadyPicked,
+  // savings math, apply handler) unchanged.
+  const recommendedRate = recommendation?.rate ?? null;
 
   // Cost of the currently-picked carrier+service (for savings display).
   const pickedTotal = useMemo(() => {
@@ -1860,9 +1882,9 @@ export default function PendingShipmentsWork() {
               <thead className="bg-slate-100 text-slate-700 text-xs uppercase tracking-wider">
                 <tr>
                   <th className="text-left px-2 py-2">Shipped</th>
+                  <th className="text-left px-2 py-2">Who</th>
                   <th className="text-left px-2 py-2">SKU</th>
                   <th className="text-left px-2 py-2">Model</th>
-                  <th className="text-left px-2 py-2">Marketplace</th>
                   <th className="text-left px-2 py-2">Service</th>
                   <th className="text-left px-2 py-2">Customer</th>
                   <th className="text-left px-2 py-2">State</th>
@@ -1879,13 +1901,35 @@ export default function PendingShipmentsWork() {
                   </tr>
                 )}
                 {filteredShipped.map((r, idx) => {
-                  const o = r.order;
-                  const svc = serviceBadge(o);
+                  const o = r.order as any;
                   const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
                   const key = `${o.orderId ?? o.orderNumber}-shipped`;
-                  const shipTime = o.shipDate
-                    ? DateTime.fromISO(o.shipDate).setZone("America/New_York").toFormat("h:mm a")
+                  // Prefer shipping_activity.created_at (real ops-clock
+                  // time we billed the label) → ShipStation createDate
+                  // (shipment record created) → shipDate (date-only, so
+                  // 12:00 AM). Last two are fallbacks for pre-audit-log
+                  // rows only.
+                  const timeSource = o.shippedAt ?? o.createDate ?? o.shipDate ?? null;
+                  const shipTime = timeSource
+                    ? DateTime.fromISO(timeSource).setZone("America/New_York").toFormat("h:mm a")
                     : "—";
+                  // Pretty service name: "fedex_home_delivery" →
+                  // "FedEx Home Delivery". Handles carrier prefixes
+                  // (fedex/ups/usps) as brand caps and title-cases the rest.
+                  const prettyService = (code?: string | null) => {
+                    if (!code) return "—";
+                    return code
+                      .split("_")
+                      .map((w) => {
+                        const l = w.toLowerCase();
+                        if (l === "fedex") return "FedEx";
+                        if (l === "ups") return "UPS";
+                        if (l === "usps") return "USPS";
+                        if (l === "am" || l === "pm") return l.toUpperCase();
+                        return l.charAt(0).toUpperCase() + l.slice(1);
+                      })
+                      .join(" ");
+                  };
                   return (
                     <tr
                       key={key}
@@ -1893,6 +1937,9 @@ export default function PendingShipmentsWork() {
                     >
                       <td className="px-2 py-2 whitespace-nowrap text-xs text-gray-600 align-top">
                         {shipTime}
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap text-xs text-gray-800 align-top">
+                        {o.shippedByUser ?? <span className="text-gray-400">—</span>}
                       </td>
                       <td className="px-2 py-2 font-mono font-bold text-gray-900 align-top">
                         {r.items.map((it, i) => (
@@ -1911,15 +1958,8 @@ export default function PendingShipmentsWork() {
                           </div>
                         ))}
                       </td>
-                      <td className="px-2 py-2 whitespace-nowrap align-top">
-                        <MarketplaceBadge order={o} />
-                      </td>
-                      <td className="px-2 py-2 whitespace-nowrap align-top">
-                        {svc && (
-                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold border ${svc.className}`}>
-                            {svc.label}
-                          </span>
-                        )}
+                      <td className="px-2 py-2 text-xs text-gr-black align-top">
+                        {prettyService(o.serviceCode)}
                       </td>
                       <td className="px-2 py-2 text-gray-800 font-medium whitespace-nowrap max-w-[14ch] truncate align-top" title={customer}>
                         {customer}
@@ -2483,12 +2523,11 @@ export default function PendingShipmentsWork() {
                   const bg = isAlreadyPicked ? "bg-emerald-50" : "bg-yellow-50";
                   const border = isAlreadyPicked ? "border-emerald-400" : "border-yellow-400";
                   const icon = isAlreadyPicked ? "✓" : "⭐";
-                  const heading = isAlreadyPicked
-                    ? "Auto-picked · cheapest that meets buyer's ~" + maxTransitDays + "-day promise"
-                    : "Recommended · cheapest that meets buyer's ~" + maxTransitDays + "-day promise";
+                  const heading = isAlreadyPicked ? "Auto-picked" : "Recommended";
+                  const reasons = recommendation?.reasons ?? [];
                   return (
-                    <div className={`${bg} border-2 ${border} rounded-lg p-3 flex items-center gap-3`}>
-                      <div className="text-2xl">{icon}</div>
+                    <div className={`${bg} border-2 ${border} rounded-lg p-3 flex items-start gap-3`}>
+                      <div className="text-2xl leading-none">{icon}</div>
                       <div className="flex-1 min-w-0">
                         <div className={`text-xs font-bold uppercase tracking-wider ${isAlreadyPicked ? "text-emerald-900" : "text-yellow-900"}`}>
                           {heading}
@@ -2508,12 +2547,20 @@ export default function PendingShipmentsWork() {
                             </span>
                           )}
                         </div>
+                        {/* Reasoning line — WHY this pick. Ops shouldn't
+                            have to guess: transit budget, USPS gate
+                            outcome, savings math all summarized here. */}
+                        {reasons.length > 0 && (
+                          <div className={`text-[11px] mt-0.5 ${isAlreadyPicked ? "text-emerald-800" : "text-yellow-800"}`}>
+                            because {reasons.join(" · ")}
+                          </div>
+                        )}
                       </div>
                       {!isAlreadyPicked && (
                         <button
                           type="button"
                           onClick={applyRecommendation}
-                          className="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-bold whitespace-nowrap"
+                          className="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-bold whitespace-nowrap self-center"
                         >
                           Use it
                         </button>
