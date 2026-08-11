@@ -482,6 +482,59 @@ export default function PendingShipmentsWork() {
   // dispatches carriers in parallel + caches 5 min so wall-clock is
   // ~slowest single carrier, not the sum.
   const [compareAllCarriers, setCompareAllCarriers] = useState<boolean>(false);
+
+  // Buyer's transit expectation derived from the marketplace-requested
+  // service or order tags. Powers the recommendation chip — the goal
+  // is "cheapest that gets there in time," not "cheapest overall."
+  // Overnight/next-day → 1d, 2day/expedited/express → 2d, 3day → 3d,
+  // everything else → 5d (standard). Conservative — recommending a
+  // slower service than promised is the FE bug that costs a claim,
+  // recommending a faster one just costs money we already spend now.
+  const maxTransitFor = (order: any): number => {
+    const svc = ((order?.requestedShippingService ?? "") + " " + (order?.serviceCode ?? "")).toLowerCase();
+    if (/overnight|next[\s_-]?day|1[\s_-]?day/.test(svc)) return 1;
+    if (/2[\s_-]?day|expedited|express|priority[\s_-]?overnight/.test(svc)) return 2;
+    if (/3[\s_-]?day/.test(svc)) return 3;
+    return 5; // standard / ground / home delivery / unknown
+  };
+
+  // Recommendation memo — cheapest rate whose transit is at or under
+  // the buyer's promise. Null when no rates loaded, or every rate
+  // exceeds the tolerance (rare — usually falls back to standard 5d
+  // which every ground service meets). Uses `rates` (multi-carrier
+  // since we always fetch all whitelisted now).
+  const maxTransitDays = pickerRow ? maxTransitFor(pickerRow.order) : 5;
+  const recommendedRate = useMemo(() => {
+    if (rates.length === 0) return null;
+    const eligible = rates.filter((r) => {
+      // Unknown transit is inconclusive — treat as eligible so we
+      // don't drop e.g. FedEx SmartPost from consideration just
+      // because ShipStation returned null.
+      if (r.transitDays == null) return true;
+      return r.transitDays <= maxTransitDays;
+    });
+    if (eligible.length === 0) return null;
+    return eligible.reduce((best, r) => {
+      const bTotal = best.shipmentCost + best.otherCost;
+      const rTotal = r.shipmentCost + r.otherCost;
+      return rTotal < bTotal ? r : best;
+    });
+  }, [rates, maxTransitDays]);
+
+  // Cost of the currently-picked carrier+service (for savings display).
+  const pickedTotal = useMemo(() => {
+    if (!pickedCarrier || !pickedService) return null;
+    const r = rates.find(
+      (x) => x.carrierCode === pickedCarrier && x.serviceCode === pickedService
+    );
+    return r ? r.shipmentCost + r.otherCost : null;
+  }, [rates, pickedCarrier, pickedService]);
+
+  const applyRecommendation = () => {
+    if (!recommendedRate) return;
+    if (recommendedRate.carrierCode) setPickedCarrier(recommendedRate.carrierCode);
+    setPickedService(recommendedRate.serviceCode);
+  };
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printResult, setPrintResult] = useState<{
@@ -695,10 +748,12 @@ export default function PendingShipmentsWork() {
     // In compare-all mode we don't need a picked carrier — the query
     // asks for every whitelisted one. In per-carrier mode, no carrier
     // = no rate query.
-    if (!compareAllCarriers && !pickedCarrier) {
-      setRates([]);
-      return;
-    }
+    // Wait for the carriers list to load before firing. Otherwise the
+    // recommendation-driving multi-carrier fetch would race with the
+    // /shipping/carriers request and end up sending an empty
+    // carrierCodes array (falls back to every ShipStation account
+    // carrier including the ones we filter out).
+    if (carriers.length === 0) return;
     const totalOz = (Number(weightLb) || 0) * 16 + (Number(weightOz) || 0);
     if (totalOz <= 0) {
       setRates([]);
@@ -713,12 +768,14 @@ export default function PendingShipmentsWork() {
           ? { length: Number(dimL), width: Number(dimW), height: Number(dimH) }
           : undefined;
         const insurance = Number(insuranceAmount) || 0;
-        // Compare-all mode: send every whitelisted carrier as
-        // carrierCodes[] so the backend parallelizes across all of
-        // them. Per-carrier mode: keep the single-carrier scope.
-        const carrierCodesPayload = compareAllCarriers
-          ? { carrierCodes: carriers.map((c) => c.code).filter(Boolean) }
-          : { carrierCodes: [pickedCarrier] };
+        // Always fetch every whitelisted carrier so the recommendation
+        // chip (see recommendedRate memo) has cross-carrier data to
+        // pick the cheapest option that meets the buyer's transit
+        // promise. The visible rate table filters to `pickedCarrier`
+        // when compareAllCarriers is off — same fetch, different view.
+        const carrierCodesPayload = {
+          carrierCodes: carriers.map((c) => c.code).filter(Boolean),
+        };
         const resp = await fetch(`${apiEndpoint}/shipping/rates`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -749,7 +806,7 @@ export default function PendingShipmentsWork() {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, pickedCarrier, compareAllCarriers, carriers]);
+  }, [apiEndpoint, pickerRow, confirmMode, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, carriers]);
 
   // Rules-engine defaults — fetched on confirm-mode open. Every
   // matching rule's actions get merged into a bundle; we apply each
@@ -2257,6 +2314,54 @@ export default function PendingShipmentsWork() {
                   </select>
                 </div>
 
+                {/* Recommendation chip — cheapest carrier+service that
+                    meets the buyer's transit promise. Visible any time
+                    a recommendation exists AND either (a) no service
+                    is picked yet, or (b) the pick is more expensive
+                    than the recommendation. If the pick already IS
+                    the recommendation, we hide the chip to avoid
+                    nagging. */}
+                {recommendedRate && (() => {
+                  const recTotal = recommendedRate.shipmentCost + recommendedRate.otherCost;
+                  const isAlreadyPicked =
+                    recommendedRate.carrierCode === pickedCarrier &&
+                    recommendedRate.serviceCode === pickedService;
+                  if (isAlreadyPicked) return null;
+                  const savings = pickedTotal !== null ? pickedTotal - recTotal : null;
+                  return (
+                    <div className="bg-yellow-50 border-2 border-yellow-400 rounded-lg p-3 flex items-center gap-3">
+                      <div className="text-2xl">⭐</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold text-yellow-900 uppercase tracking-wider">
+                          Recommended · cheapest that meets buyer's ~{maxTransitDays}-day promise
+                        </div>
+                        <div className="text-sm text-gr-black mt-0.5">
+                          <span className="font-mono font-bold">{(recommendedRate.carrierCode ?? "").toUpperCase()}</span>
+                          {" · "}
+                          <span>{recommendedRate.serviceName || recommendedRate.serviceCode}</span>
+                          {recommendedRate.transitDays != null && (
+                            <span className="text-gray-600"> · ~{recommendedRate.transitDays}d</span>
+                          )}
+                          {" · "}
+                          <span className="font-bold">${recTotal.toFixed(2)}</span>
+                          {savings !== null && savings > 0.5 && (
+                            <span className="ml-2 inline-block bg-emerald-100 text-emerald-900 border border-emerald-300 rounded px-1.5 py-0.5 text-xs font-bold">
+                              save ${savings.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={applyRecommendation}
+                        className="px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-bold whitespace-nowrap"
+                      >
+                        Use it
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* Rate table. Per-carrier mode = single carrier's
                     services. Compare-all mode = every whitelisted
                     carrier's rates in one merged table sorted by cost. */}
@@ -2329,7 +2434,10 @@ export default function PendingShipmentsWork() {
                           <tbody>
                             {(compareAllCarriers
                               ? [...rates].sort((a, b) => (a.shipmentCost + a.otherCost) - (b.shipmentCost + b.otherCost))
-                              : rates
+                              // Backend now returns all whitelisted carriers so the
+                              // recommendation chip has cross-carrier data. Filter to
+                              // the picked carrier for the single-carrier view.
+                              : rates.filter((r) => r.carrierCode === pickedCarrier)
                             ).map((r) => {
                               // In compare mode a row matches only if
                               // BOTH carrier + service match — same
