@@ -559,6 +559,20 @@ export default function PendingShipmentsWork() {
     (pickerRow?.order as any)?.advancedOptions?.source ??
     ""
   ).toString().toLowerCase();
+  // Address-shape flags used by the USPS gate + the PO Box warning
+  // banner. UPS/FedEx can't deliver to PO Boxes or military APO/FPO/
+  // DPO, and both surcharge heavily to non-contiguous states — USPS
+  // is the right answer there regardless of the normal gates.
+  const shipToStreet1ForRec = (pickerRow?.order?.shipTo?.street1 ?? "").toString();
+  const shipToStateForRec = (pickerRow?.order?.shipTo?.state ?? "").toString().toUpperCase();
+  const isPoBox = /^\s*p\.?\s*o\.?\s*box/i.test(shipToStreet1ForRec);
+  const isMilitary =
+    /\b(APO|FPO|DPO)\b/i.test(shipToStreet1ForRec) ||
+    ["AA", "AE", "AP"].includes(shipToStateForRec);
+  const isRemoteState = ["AK", "HI", "PR", "GU", "VI", "AS", "MP"].includes(shipToStateForRec);
+  // "USPS-preferred" umbrella — any of the carve-outs where USPS is
+  // the right answer regardless of the normal eBay/under-$300 gate.
+  const uspsPreferredAddress = isPoBox || isMilitary || isRemoteState;
   // Returns { rate, reasons[] } — the reason strings render on the
   // chip so ops sees WHY this pick, not just what. Null when rates
   // are empty or nothing meets the transit budget.
@@ -586,13 +600,36 @@ export default function PendingShipmentsWork() {
 
     let picked = cheapest;
     if (isUsps(cheapest)) {
-      // USPS gate: under $300 AND eBay AND >=$1 cheaper.
+      // Address-shape carve-outs — USPS wins outright regardless of
+      // the normal marketplace/order-total gate:
+      //   - PO Box: UPS/FedEx literally can't deliver
+      //   - Military APO/FPO/DPO: same, USPS only
+      //   - AK/HI/PR/GU/VI/etc: UPS/FedEx surcharge is absurd; USPS
+      //     is almost always the right pick here (real case Adam sent
+      //     2026-08-12: Buckland AK PO Box quoted UPS Ground at $117
+      //     vs USPS Ground Advantage at $40)
+      // Regular gate keeps the "eBay + under $300 + $1+ cheaper"
+      // constraint so we don't over-recommend USPS on contiguous-US
+      // dealer shipments where UPS/FedEx is the shop preference.
       const uspsAllowedByOrder =
         orderTotalForRec > 0 && orderTotalForRec < 300 && marketplaceForRec === "ebay";
       const uspsCheaperByEnough =
         !cheapestNonUsps || totalOf(cheapestNonUsps) - totalOf(cheapest) >= 1.0;
 
-      if (uspsAllowedByOrder && uspsCheaperByEnough) {
+      if (uspsPreferredAddress) {
+        // Carve-out — pick USPS + explain why.
+        picked = cheapest;
+        const label = isPoBox
+          ? "PO Box (only USPS delivers)"
+          : isMilitary
+            ? "APO/FPO/DPO (only USPS delivers)"
+            : `${shipToStateForRec} — USPS-preferred remote destination`;
+        reasons.push(`USPS OK: ${label}`);
+        if (cheapestNonUsps) {
+          const diff = totalOf(cheapestNonUsps) - totalOf(cheapest);
+          reasons.push(`$${diff.toFixed(2)} cheaper than ${cheapestNonUsps.serviceName || cheapestNonUsps.serviceCode}`);
+        }
+      } else if (uspsAllowedByOrder && uspsCheaperByEnough) {
         picked = cheapest;
         reasons.push("USPS OK: eBay + under $300");
         if (cheapestNonUsps) {
@@ -613,7 +650,16 @@ export default function PendingShipmentsWork() {
     }
 
     return { rate: picked, reasons };
-  }, [rates, maxTransitDays, orderTotalForRec, marketplaceForRec]);
+  }, [
+    rates,
+    maxTransitDays,
+    orderTotalForRec,
+    marketplaceForRec,
+    uspsPreferredAddress,
+    isPoBox,
+    isMilitary,
+    shipToStateForRec,
+  ]);
 
   // Back-compat alias — most sites still use `recommendedRate` and
   // treating it as a rate row keeps existing checks (isAlreadyPicked,
@@ -2586,6 +2632,30 @@ export default function PendingShipmentsWork() {
                     )}
                   </select>
                 </div>
+
+                {/* Undeliverable-address warning: UPS + FedEx can't
+                    deliver to PO Boxes OR military APO/FPO/DPO. Fires
+                    when the currently-picked carrier is one of those.
+                    Red — this is a "will fail at the carrier" warning,
+                    not a "you could save money" nudge. */}
+                {(isPoBox || isMilitary) &&
+                  pickedCarrier &&
+                  pickedCarrier !== "stamps_com" && (
+                    <div className="border-2 border-red-500 bg-red-50 rounded-lg p-3 flex items-start gap-3">
+                      <div className="text-2xl leading-none">⛔</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold uppercase tracking-wider text-red-900">
+                          {isPoBox ? "PO Box destination" : "Military address"} —{" "}
+                          {pickedCarrier.toUpperCase()} won't deliver
+                        </div>
+                        <div className="text-sm text-red-900 mt-0.5">
+                          Only USPS delivers to {isPoBox ? "PO Boxes" : "APO/FPO/DPO"}.
+                          Switch the carrier to <strong>USPS (Stamps.com)</strong> or the
+                          label will be returned/undeliverable.
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                 {/* Recommendation chip — cheapest carrier+service that
                     meets the buyer's transit promise. Visible any time
