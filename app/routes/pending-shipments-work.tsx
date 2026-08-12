@@ -1556,6 +1556,11 @@ export default function PendingShipmentsWork() {
     confirmation: "none",
     insuranceAmount: "",
     insuranceProvider: "carrier",
+    // v2 (Adam 2026-08-12): optional inventory linkage + freeform
+    // notes. Comma-separated inventory IDs get tracking# attached to
+    // them on print + surface in the ShipStation order's items.
+    inventoryIds: "",
+    notes: "",
   });
   const [manualCarriers, setManualCarriers] = useState<Array<{code: string; name: string}>>([]);
   const [manualServices, setManualServices] = useState<Array<{code: string; name: string}>>([]);
@@ -1627,6 +1632,12 @@ export default function PendingShipmentsWork() {
     setManualPrinting(true);
     try {
       const insurance = Number(m.insuranceAmount) || 0;
+      // v2: optional inventory linkage — comma-separated IDs get
+      // parsed to numbers, invalid/blank entries dropped.
+      const invIds = m.inventoryIds
+        .split(",")
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0);
       const resp = await authFetch(`${spaEndpoint}/shipping/print-manual`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1649,6 +1660,8 @@ export default function PendingShipmentsWork() {
           packageCode: m.packageCode,
           confirmation: m.confirmation,
           ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider: m.insuranceProvider } : {}),
+          ...(invIds.length > 0 ? { inventoryIds: invIds } : {}),
+          ...(m.notes ? { notes: m.notes } : {}),
         }),
       });
       const data = await resp.json();
@@ -3820,6 +3833,45 @@ export default function PendingShipmentsWork() {
                           <option value="shipsurance">Shipsurance</option>
                           <option value="xcover">XCover</option>
                         </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Inventory linkage + notes (Adam 2026-08-12) */}
+                <div>
+                  <div className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+                    Inventory + notes (optional)
+                  </div>
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">
+                        Inventory IDs (comma-separated)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 43201, 43202"
+                        value={manualShip.inventoryIds}
+                        onChange={(e) => setManualShip({ ...manualShip, inventoryIds: e.target.value })}
+                        className="w-full text-sm border border-gray-300 rounded px-2 py-1"
+                      />
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        Rows get tracking# attached + marked shipped. Leave blank for pure off-inventory sends.
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">
+                        Note
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Abraham Mateo — off-pipeline"
+                        value={manualShip.notes}
+                        onChange={(e) => setManualShip({ ...manualShip, notes: e.target.value })}
+                        className="w-full text-sm border border-gray-300 rounded px-2 py-1"
+                      />
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        Shows up on the ShipStation order so you can recognize the shipment later.
                       </div>
                     </div>
                   </div>
