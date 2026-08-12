@@ -553,16 +553,9 @@ export default function PendingShipmentsWork() {
   // $300, from eBay, AND at least $1 cheaper than the cheapest non-
   // USPS eligible option. Ops can still pick USPS manually from the
   // rate table for out-of-band cases — this only gates auto-recommend.
-  const orderTotalForRec = pickerRow?.order?.orderTotal ?? 0;
-  const marketplaceForRec = (
-    pickerRow?.order?.orderSource ??
-    (pickerRow?.order as any)?.advancedOptions?.source ??
-    ""
-  ).toString().toLowerCase();
-  // Address-shape flags used by the USPS gate + the PO Box warning
-  // banner. UPS/FedEx can't deliver to PO Boxes or military APO/FPO/
-  // DPO, and both surcharge heavily to non-contiguous states — USPS
-  // is the right answer there regardless of the normal gates.
+  // Address-shape flags — used to (a) annotate the rec chip's reason
+  // string when USPS is picked for a carve-out reason and (b) drive
+  // the red "PO Box / APO carrier-can't-deliver" warning banner.
   const shipToStreet1ForRec = (pickerRow?.order?.shipTo?.street1 ?? "").toString();
   const shipToStateForRec = (pickerRow?.order?.shipTo?.state ?? "").toString().toUpperCase();
   const isPoBox = /^\s*p\.?\s*o\.?\s*box/i.test(shipToStreet1ForRec);
@@ -570,9 +563,6 @@ export default function PendingShipmentsWork() {
     /\b(APO|FPO|DPO)\b/i.test(shipToStreet1ForRec) ||
     ["AA", "AE", "AP"].includes(shipToStateForRec);
   const isRemoteState = ["AK", "HI", "PR", "GU", "VI", "AS", "MP"].includes(shipToStateForRec);
-  // "USPS-preferred" umbrella — any of the carve-outs where USPS is
-  // the right answer regardless of the normal eBay/under-$300 gate.
-  const uspsPreferredAddress = isPoBox || isMilitary || isRemoteState;
   // Returns { rate, reasons[] } — the reason strings render on the
   // chip so ops sees WHY this pick, not just what. Null when rates
   // are empty or nothing meets the transit budget.
@@ -598,54 +588,27 @@ export default function PendingShipmentsWork() {
     const reasons: string[] = [];
     reasons.push(`cheapest that meets buyer's ~${maxTransitDays}d promise`);
 
-    let picked = cheapest;
-    if (isUsps(cheapest)) {
-      // Address-shape carve-outs — USPS wins outright regardless of
-      // the normal marketplace/order-total gate:
-      //   - PO Box: UPS/FedEx literally can't deliver
-      //   - Military APO/FPO/DPO: same, USPS only
-      //   - AK/HI/PR/GU/VI/etc: UPS/FedEx surcharge is absurd; USPS
-      //     is almost always the right pick here (real case Adam sent
-      //     2026-08-12: Buckland AK PO Box quoted UPS Ground at $117
-      //     vs USPS Ground Advantage at $40)
-      // Regular gate keeps the "eBay + under $300 + $1+ cheaper"
-      // constraint so we don't over-recommend USPS on contiguous-US
-      // dealer shipments where UPS/FedEx is the shop preference.
-      const uspsAllowedByOrder =
-        orderTotalForRec > 0 && orderTotalForRec < 300 && marketplaceForRec === "ebay";
-      const uspsCheaperByEnough =
-        !cheapestNonUsps || totalOf(cheapestNonUsps) - totalOf(cheapest) >= 1.0;
-
-      if (uspsPreferredAddress) {
-        // Carve-out — pick USPS + explain why.
-        picked = cheapest;
-        const label = isPoBox
-          ? "PO Box (only USPS delivers)"
-          : isMilitary
-            ? "APO/FPO/DPO (only USPS delivers)"
-            : `${shipToStateForRec} — USPS-preferred remote destination`;
-        reasons.push(`USPS OK: ${label}`);
-        if (cheapestNonUsps) {
-          const diff = totalOf(cheapestNonUsps) - totalOf(cheapest);
-          reasons.push(`$${diff.toFixed(2)} cheaper than ${cheapestNonUsps.serviceName || cheapestNonUsps.serviceCode}`);
-        }
-      } else if (uspsAllowedByOrder && uspsCheaperByEnough) {
-        picked = cheapest;
-        reasons.push("USPS OK: eBay + under $300");
-        if (cheapestNonUsps) {
-          const diff = totalOf(cheapestNonUsps) - totalOf(cheapest);
-          reasons.push(`$${diff.toFixed(2)} cheaper than ${cheapestNonUsps.serviceName || cheapestNonUsps.serviceCode}`);
-        }
-      } else if (cheapestNonUsps) {
-        // USPS was cheapest but disqualified — fall back + explain.
-        picked = cheapestNonUsps;
-        const why: string[] = [];
-        if (!uspsAllowedByOrder) {
-          if (marketplaceForRec !== "ebay") why.push("not eBay");
-          if (orderTotalForRec >= 300) why.push("over $300");
-        }
-        if (!uspsCheaperByEnough) why.push("not $1+ cheaper");
-        reasons.push(`skipped USPS (${why.join(", ")})`);
+    // Simple pick: cheapest eligible always wins, including USPS.
+    // The earlier "USPS only if eBay + under $300 + $1 cheaper" gate
+    // was too restrictive — Adam's Buckland-AK PO Box case showed
+    // it blocked USPS ($40) in favor of UPS ($117) for a shipment
+    // UPS can't even deliver. Greg 2026-08-12: "if it's cheapest,
+    // still pick it" — no skip logic. Carve-outs become informational
+    // reasons on the chip, not blockers.
+    const picked = cheapest;
+    if (isUsps(picked)) {
+      if (isPoBox) {
+        reasons.push("USPS preferred: PO Box (only USPS delivers)");
+      } else if (isMilitary) {
+        reasons.push("USPS preferred: APO/FPO/DPO (only USPS delivers)");
+      } else if (isRemoteState) {
+        reasons.push(`USPS preferred: ${shipToStateForRec} — remote destination`);
+      }
+    }
+    if (cheapestNonUsps && cheapestNonUsps !== picked) {
+      const diff = totalOf(cheapestNonUsps) - totalOf(picked);
+      if (diff > 0.5) {
+        reasons.push(`$${diff.toFixed(2)} cheaper than ${cheapestNonUsps.serviceName || cheapestNonUsps.serviceCode}`);
       }
     }
 
@@ -653,11 +616,9 @@ export default function PendingShipmentsWork() {
   }, [
     rates,
     maxTransitDays,
-    orderTotalForRec,
-    marketplaceForRec,
-    uspsPreferredAddress,
     isPoBox,
     isMilitary,
+    isRemoteState,
     shipToStateForRec,
   ]);
 
