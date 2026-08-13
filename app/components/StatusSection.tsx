@@ -546,6 +546,11 @@ export default function StatusSection({
                 const isCustom = order.custom != null;
                 const isBulk = order.bulk_order != null;
                 const isTradeIn = isBulk && order.bulk_order.type === "trade_in";
+                // Back Market buybacks ride the custom array with order_id = 0,
+                // so isCustom/isBulk/isItad are all false and they'd fall through
+                // to the anonymous "regular order" branch (blank name, empty pill).
+                // The API flags them explicitly.
+                const isBackMarket = order.is_back_market === true;
 
                 let modelInfo, details, orderDetails;
 
@@ -603,6 +608,18 @@ export default function StatusSection({
                   orderString = orderDetails.company
                     ? orderDetails.company
                     : `${orderDetails.first_name} ${orderDetails.last_name}`;
+                } else if (isBackMarket) {
+                  // No consumer name (order_id = 0). Label with the graded
+                  // device if present, else the Back Market order number.
+                  orderString =
+                    order.model_desc ||
+                    order.description ||
+                    (order.bm_order_number
+                      ? `BM #${order.bm_order_number}`
+                      : "Back Market Buyback");
+                  if (orderString.length > 50) {
+                    orderString = orderString.substr(0, 50) + "\u2026";
+                  }
                 } else {
                   orderString = order.model_desc || order.description || "";
                   if (orderString.length > 50) {
@@ -610,7 +627,17 @@ export default function StatusSection({
                   }
                 }
                 return (
-                  <React.Fragment key={order.id}>
+                  <React.Fragment
+                    key={`${
+                      isItad
+                        ? "itad"
+                        : isBackMarket
+                        ? "bm"
+                        : isCustom
+                        ? "custom"
+                        : "quote"
+                    }-${order.id}`}
+                  >
                     {order.status_value.status_option.key == statusKey && (
                       <div
                         className={`${background} mb-1 flex justify-between rounded-md border border-gr-black py-0.5 px-2 cursor-pointer hover:bg-gray-100 transition-colors`}
@@ -659,6 +686,13 @@ export default function StatusSection({
                           ) : isBulk ? (
                             <span className="inline-flex items-center whitespace-nowrap rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800">
                               {orderDetails.id}
+                            </span>
+                          ) : isBackMarket ? (
+                            <span
+                              className="inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-bold"
+                              style={{ backgroundColor: "#E1FA6E", color: "#000000" }}
+                            >
+                              Back Market
                             </span>
                           ) : (
                             <span className="inline-flex items-center whitespace-nowrap rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-800">
