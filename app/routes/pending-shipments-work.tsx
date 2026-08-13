@@ -245,6 +245,7 @@ type InventoryMatch = {
   sku: string | null;
   description: string | null;
   serial_number: string | null;
+  price_paid: number | string | null;
   created_at: string | null;
 };
 
@@ -574,6 +575,18 @@ export default function PendingShipmentsWork() {
     /\b(APO|FPO|DPO)\b/i.test(shipToStreet1ForRec) ||
     ["AA", "AE", "AP"].includes(shipToStateForRec);
   const isRemoteState = ["AK", "HI", "PR", "GU", "VI", "AS", "MP"].includes(shipToStateForRec);
+  // USPS eligibility for auto-rec (Adam 2026-08-13): eBay only AND
+  // order under $500. USPS is unreliable enough that we don't pick it
+  // for BackMarket / Amazon / other dealer channels — those want the
+  // FedEx/UPS pipeline. PO Box + APO + remote-state carve-outs above
+  // still override this gate (nobody else delivers there).
+  const orderTotalForRec = pickerRow?.order?.orderTotal ?? 0;
+  const marketplaceForRec = (
+    pickerRow?.order?.orderSource ??
+    (pickerRow?.order as any)?.advancedOptions?.source ??
+    ""
+  ).toString().toLowerCase();
+  const uspsGateOK = marketplaceForRec === "ebay" && orderTotalForRec > 0 && orderTotalForRec < 500;
   // Returns { rate, reasons[] } — the reason strings render on the
   // chip so ops sees WHY this pick, not just what. Null when rates
   // are empty or nothing meets the transit budget.
@@ -599,21 +612,27 @@ export default function PendingShipmentsWork() {
     const reasons: string[] = [];
     reasons.push(`cheapest that meets buyer's ~${maxTransitDays}d promise`);
 
-    // Simple pick: cheapest eligible always wins, including USPS.
-    // The earlier "USPS only if eBay + under $300 + $1 cheaper" gate
-    // was too restrictive — Adam's Buckland-AK PO Box case showed
-    // it blocked USPS ($40) in favor of UPS ($117) for a shipment
-    // UPS can't even deliver. Greg 2026-08-12: "if it's cheapest,
-    // still pick it" — no skip logic. Carve-outs become informational
-    // reasons on the chip, not blockers.
-    const picked = cheapest;
+    // USPS gate (Adam 2026-08-13, revised): USPS is too unreliable
+    // to pick unless it fits the narrow "eBay + under $500" lane OR
+    // the destination physically requires it (PO Box / APO / non-
+    // contiguous US). For BackMarket / Amazon / other dealer flows,
+    // stay on FedEx / UPS even if USPS is cheapest.
+    let picked = cheapest;
     if (isUsps(picked)) {
-      if (isPoBox) {
-        reasons.push("USPS preferred: PO Box (only USPS delivers)");
-      } else if (isMilitary) {
-        reasons.push("USPS preferred: APO/FPO/DPO (only USPS delivers)");
-      } else if (isRemoteState) {
-        reasons.push(`USPS preferred: ${shipToStateForRec} — remote destination`);
+      const uspsForcedByAddress = isPoBox || isMilitary || isRemoteState;
+      if (uspsForcedByAddress) {
+        if (isPoBox) reasons.push("USPS preferred: PO Box (only USPS delivers)");
+        else if (isMilitary) reasons.push("USPS preferred: APO/FPO/DPO (only USPS delivers)");
+        else reasons.push(`USPS preferred: ${shipToStateForRec} — remote destination`);
+      } else if (uspsGateOK) {
+        reasons.push("USPS OK: eBay + under $500");
+      } else if (cheapestNonUsps) {
+        // USPS was cheapest but the gate blocks it — fall back.
+        picked = cheapestNonUsps;
+        const why: string[] = [];
+        if (marketplaceForRec !== "ebay") why.push("not eBay");
+        if (orderTotalForRec >= 500) why.push("over $500");
+        reasons.push(`skipped USPS (${why.join(", ")}) — unreliable for non-eBay/high-value`);
       }
     }
     if (cheapestNonUsps && cheapestNonUsps !== picked) {
@@ -631,6 +650,9 @@ export default function PendingShipmentsWork() {
     isMilitary,
     isRemoteState,
     shipToStateForRec,
+    uspsGateOK,
+    marketplaceForRec,
+    orderTotalForRec,
   ]);
 
   // Back-compat alias — most sites still use `recommendedRate` and
@@ -2337,6 +2359,23 @@ export default function PendingShipmentsWork() {
                     <div className="text-xs font-mono text-gr-black leading-tight">
                       {pickerRow.items.map((_, i) => picks[i]?.id).filter(Boolean).join(", ")}
                     </div>
+                    {/* Purchase price — cost basis for the picked
+                        inventory (Adam 2026-08-13). Lets ops eyeball
+                        whether postage-to-margin is sane before firing.
+                        Summed across all picks so multi-item orders
+                        show one number. */}
+                    {(() => {
+                      const totalPaid = pickerRow.items.reduce(
+                        (sum, _, i) => sum + (Number(picks[i]?.price_paid ?? 0) || 0),
+                        0
+                      );
+                      if (totalPaid <= 0) return null;
+                      return (
+                        <div className="mt-1 text-[10px] text-gray-500 uppercase tracking-wider">
+                          Cost basis <span className="normal-case tracking-normal text-gr-black font-bold">${totalPaid.toFixed(2)}</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
