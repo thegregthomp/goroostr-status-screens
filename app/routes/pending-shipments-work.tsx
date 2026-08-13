@@ -642,7 +642,12 @@ export default function PendingShipmentsWork() {
       }
     }
 
-    return { rate: picked, reasons };
+    // cheapestNonUsps also exposed for the cost-anomaly baseline —
+    // USPS pricing is an outlier (Adam 2026-08-13: "USPS too
+    // unreliable"). Comparing FedEx/UPS overrides against a USPS
+    // baseline produces false-positive Slack alerts, so the anomaly
+    // check uses this instead of the rec pick.
+    return { rate: picked, reasons, cheapestNonUsps };
   }, [
     rates,
     maxTransitDays,
@@ -1237,11 +1242,15 @@ export default function PendingShipmentsWork() {
       const insurance = Number(insuranceAmount) || 0;
 
       // Recommended cost at the moment ops hit Print — backend uses
-      // it for the cost-anomaly Slack alert. Send even if ops picked
-      // something different from the rec; the compare is
-      // actual vs recommendation, not vs picked.
-      const recCost = recommendedRate
-        ? recommendedRate.shipmentCost + recommendedRate.otherCost
+      // Anomaly baseline = cheapest NON-USPS eligible rate (not
+      // whatever the rec chip picked). USPS pricing is treated as an
+      // outlier — if it's the visible rec and ops correctly picks
+      // FedEx/UPS instead, we don't want a false-positive
+      // "postage 5× over rec" Slack alert. Falls back to the rec
+      // pick if there's no non-USPS baseline available (very rare).
+      const anomalyBaseline = recommendation?.cheapestNonUsps ?? recommendedRate;
+      const recCost = anomalyBaseline
+        ? anomalyBaseline.shipmentCost + anomalyBaseline.otherCost
         : null;
 
       const resp = await authFetch(`${spaEndpoint}/shipping/print-label`, {
