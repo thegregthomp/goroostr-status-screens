@@ -483,6 +483,17 @@ export default function PendingShipmentsWork() {
   // with the summed median. This tag drives the "auto-filled" badge
   // in the weight field.
   const [weightHistorySamples, setWeightHistorySamples] = useState<number>(0);
+  // Verify-on-scale gate (Adam/Greg 2026-08-13). When history
+  // prefills the weight, ops MUST either edit it (weighed + differs)
+  // or click "Verified" (weighed + matches) before Print unlocks.
+  // Prevents the sample-of-samples drift Greg flagged where a rubber-
+  // stamped prefill becomes the next median with no fresh signal.
+  //   'pending'   — prefilled, waiting for ops action; Print disabled
+  //   'verified'  — ops clicked Verified (kept the prefill as-is)
+  //   'edited'    — ops changed either lb or oz input
+  //   'fresh'     — no prefill fired; ops typed from blank
+  type WeightSource = "pending" | "verified" | "edited" | "fresh";
+  const [weightSource, setWeightSource] = useState<WeightSource>("fresh");
   // Dropdown-per-service UX (2026-08-10 redesign, replacing the full
   // rate table): shipper picks a carrier, then a service, and we
   // fetch a SINGLE rate for that specific pair. Much faster than the
@@ -881,6 +892,7 @@ export default function PendingShipmentsWork() {
     setPrintError(null);
     setWeightLb("");
     setWeightOz("");
+    setWeightSource("fresh");
     setPackageCode("package");
     setPackages([]);
     setPackagesLoading(false);
@@ -1063,6 +1075,8 @@ export default function PendingShipmentsWork() {
             0
           ) as number;
           setWeightHistorySamples(samples);
+          // Prefill fired → gate Print until ops verifies or edits.
+          setWeightSource("pending");
         }
       } catch {
         /* non-fatal — falls back to order's default weight */
@@ -1226,6 +1240,16 @@ export default function PendingShipmentsWork() {
           ...(pickerRow.order.shipTo?.state
             ? { destState: pickerRow.order.shipTo.state }
             : {}),
+          // Weight-source telemetry (Adam/Greg 2026-08-13). Map the
+          // FE state to the backend enum. "pending" shouldn't reach
+          // here — Print is gated on it — but guard just in case.
+          ...(weightSource === "verified"
+            ? { weightSource: "prefilled_verified" }
+            : weightSource === "edited"
+              ? { weightSource: "prefilled_edited" }
+              : weightSource === "fresh"
+                ? { weightSource: "weighed_fresh" }
+                : {}),
         }),
       });
       const data = await resp.json();
@@ -2464,14 +2488,38 @@ export default function PendingShipmentsWork() {
                 {/* Weight + dimensions row. */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                    <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2 flex-wrap">
                       Weight (lb / oz)
-                      {weightHistorySamples > 0 && (
+                      {/* Verify-on-scale chip. Prefill fires → chip
+                          shows yellow "verify" with a click-to-confirm
+                          button; Print stays disabled until ops either
+                          clicks Verified OR edits either input. After
+                          verify → green confirmation. This gate is
+                          what stops the sample-of-samples drift
+                          Greg flagged 2026-08-13. */}
+                      {weightHistorySamples > 0 && weightSource === "pending" && (
                         <span
-                          className="normal-case tracking-normal text-[10px] font-normal px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300"
-                          title={`Pre-filled from ${weightHistorySamples} past shipments of these SKUs. Verify on the scale — override if different.`}
+                          className="normal-case tracking-normal text-[10px] font-normal px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-900 border border-yellow-400 inline-flex items-center gap-1"
+                          title={`Pre-filled from ${weightHistorySamples} past shipments — WEIGH ON SCALE and click Verified (or edit if it differs).`}
                         >
-                          ✓ auto-filled from {weightHistorySamples} past ships
+                          ⚖️ verify on scale · prefilled from {weightHistorySamples} past ships
+                          <button
+                            type="button"
+                            onClick={() => setWeightSource("verified")}
+                            className="ml-1 px-1.5 py-0.5 rounded bg-yellow-600 hover:bg-yellow-700 text-white text-[10px] font-bold"
+                          >
+                            ✓ Verified
+                          </button>
+                        </span>
+                      )}
+                      {weightHistorySamples > 0 && weightSource === "verified" && (
+                        <span className="normal-case tracking-normal text-[10px] font-normal px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          ✓ verified · matches {weightHistorySamples} past ships
+                        </span>
+                      )}
+                      {weightHistorySamples > 0 && weightSource === "edited" && (
+                        <span className="normal-case tracking-normal text-[10px] font-normal px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          ✎ edited from prefill
                         </span>
                       )}
                     </label>
@@ -2481,8 +2529,17 @@ export default function PendingShipmentsWork() {
                         step="1"
                         min="0"
                         value={weightLb}
-                        onChange={(e) => setWeightLb(e.target.value)}
-                        className="w-16 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                        onChange={(e) => {
+                          setWeightLb(e.target.value);
+                          // Any keystroke on either input while a
+                          // prefill is pending counts as ops actively
+                          // weighing → mark edited.
+                          if (weightSource === "pending") setWeightSource("edited");
+                        }}
+                        className={
+                          "w-16 border rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark " +
+                          (weightSource === "pending" ? "border-yellow-400 bg-yellow-50" : "border-gray-300")
+                        }
                         autoFocus
                       />
                       <span className="text-xs text-gray-600">lb</span>
@@ -2492,8 +2549,14 @@ export default function PendingShipmentsWork() {
                         min="0"
                         max="15.9"
                         value={weightOz}
-                        onChange={(e) => setWeightOz(e.target.value)}
-                        className="w-16 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+                        onChange={(e) => {
+                          setWeightOz(e.target.value);
+                          if (weightSource === "pending") setWeightSource("edited");
+                        }}
+                        className={
+                          "w-16 border rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark " +
+                          (weightSource === "pending" ? "border-yellow-400 bg-yellow-50" : "border-gray-300")
+                        }
                       />
                       <span className="text-xs text-gray-600">oz</span>
                     </div>
@@ -2994,9 +3057,15 @@ export default function PendingShipmentsWork() {
                   </button>
                   <button
                     onClick={firePrint}
-                    disabled={printing || !pickedCarrier || !pickedService}
+                    disabled={printing || !pickedCarrier || !pickedService || weightSource === "pending"}
                     className="px-3 py-2 rounded bg-gr-green-dark text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
-                    title={(!pickedCarrier || !pickedService) ? "Pick a rate from the table first" : ""}
+                    title={
+                      weightSource === "pending"
+                        ? "Weigh on scale + click Verified (or edit the weight)"
+                        : (!pickedCarrier || !pickedService)
+                          ? "Pick a rate from the table first"
+                          : ""
+                    }
                   >
                     {printing ? "Printing…" : "Confirm & Print"}
                   </button>
