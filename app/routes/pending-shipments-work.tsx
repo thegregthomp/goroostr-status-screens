@@ -1271,6 +1271,12 @@ export default function PendingShipmentsWork() {
           ...(pickerRow.order.shipTo?.state
             ? { destState: pickerRow.order.shipTo.state }
             : {}),
+          // Marketplace order # + customer name for the IPS row
+          // Adam's shipping list surfaces (2026-08-13). FE has the
+          // pickerRow.order already, no extra ShipStation call needed.
+          ...(pickerRow.order.orderNumber ? { orderNumber: pickerRow.order.orderNumber } : {}),
+          ...(pickerRow.order.shipTo?.name ? { customerName: pickerRow.order.shipTo.name } : {}),
+          ...(pickerRow.order.shipTo ? { shipTo: pickerRow.order.shipTo } : {}),
           // Weight-source telemetry (Adam/Greg 2026-08-13). Map the
           // FE state to the backend enum. "pending" shouldn't reach
           // here — Print is gated on it — but guard just in case.
