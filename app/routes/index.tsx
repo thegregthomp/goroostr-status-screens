@@ -652,8 +652,17 @@ export default function Index() {
                       {selectedOrder && (
                         <div className="text-lg flex items-center gap-4">
                           {/* Order Number Link */}
-                          {selectedOrder.custom ? (
-                            <a 
+                          {selectedOrder.is_back_market && selectedOrder.back_market_order ? (
+                            <a
+                              href={`https://api.goroostr.com/nova/resources/backmarket-orders/${selectedOrder.back_market_order.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-lime-700 hover:text-lime-900 hover:underline"
+                            >
+                              Back Market Order #{selectedOrder.back_market_order.bm_order_number || selectedOrder.back_market_order.id}
+                            </a>
+                          ) : selectedOrder.custom ? (
+                            <a
                               href={`https://api.goroostr.com/nova/resources/customs/${selectedOrder.custom.id || selectedOrder.custom_id}`}
                               target="_blank"
                               rel="noopener noreferrer"
@@ -713,7 +722,9 @@ export default function Index() {
                     <div>
                       <span className="text-sm text-gr-gray-disabled">Customer</span>
                       <div className="font-semibold text-gr-black">
-                        {selectedOrder.custom ?
+                        {selectedOrder.is_back_market ?
+                          (selectedOrder.bm_order_number ? `Back Market · #${selectedOrder.bm_order_number}` : 'Back Market') :
+                          selectedOrder.custom ?
                           (selectedOrder.custom.company || `${selectedOrder.custom.first_name} ${selectedOrder.custom.last_name}`) :
                           selectedOrder.bulk_order ?
                           (selectedOrder.bulk_order.company || `${selectedOrder.bulk_order.first_name} ${selectedOrder.bulk_order.last_name}`) :
