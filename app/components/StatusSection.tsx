@@ -641,6 +641,9 @@ export default function StatusSection({
                     {order.status_value.status_option.key == statusKey && (
                       <div
                         className={`${background} mb-1 flex justify-between rounded-md border border-gr-black py-0.5 px-2 cursor-pointer hover:bg-gray-100 transition-colors`}
+                        style={
+                          isBackMarket ? { backgroundColor: "#E1FA6E" } : undefined
+                        }
                         onClick={() => onOrderClick(order)}
                       >
                         <div>
@@ -688,11 +691,21 @@ export default function StatusSection({
                               {orderDetails.id}
                             </span>
                           ) : isBackMarket ? (
+                            // Row is already Back Market lime, so invert the
+                            // lockup (black pill / lime mark) to read against it,
+                            // matching the shipping wall's MarketplaceBadge.
                             <span
-                              className="inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-bold"
-                              style={{ backgroundColor: "#E1FA6E", color: "#000000" }}
+                              className="inline-flex items-center gap-1 whitespace-nowrap rounded-full px-1.5 py-0.5 text-xs font-bold"
+                              style={{ backgroundColor: "#000000", color: "#E1FA6E" }}
+                              title="Back Market"
                             >
-                              Back Market
+                              <span
+                                className="inline-flex items-center justify-center rounded-sm px-1 leading-none font-black"
+                                style={{ backgroundColor: "#E1FA6E", color: "#000000" }}
+                              >
+                                «
+                              </span>
+                              <span>Back Market</span>
                             </span>
                           ) : (
                             <span className="inline-flex items-center whitespace-nowrap rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-800">
