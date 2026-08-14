@@ -611,8 +611,21 @@ export default function Index() {
                         <div className={`w-3 h-3 rounded-full ${JSON.parse(selectedOrder?.model_info || '{}').working_status === 'working' ? 'bg-green-500' : 'bg-red-500'}`}></div>
                         
                         {/* Item Link */}
-                        {selectedOrder.custom ? (
-                          <a 
+                        {selectedOrder.is_back_market ? (
+                          // Back Market buybacks are CustomOrderItems (order_id
+                          // = 0, so `custom` is null) — link to their own Nova
+                          // resource, NOT the quotes fallback (id collides with
+                          // an unrelated quote of the same number).
+                          <a
+                            href={`https://api.goroostr.com/nova/resources/backmarket-buybacks/${selectedOrder?.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-lime-700 hover:text-lime-900 hover:underline"
+                          >
+                            Item #{selectedOrder?.id}
+                          </a>
+                        ) : selectedOrder.custom ? (
+                          <a
                             href={`https://api.goroostr.com/nova/resources/custom-order-items/${selectedOrder?.id}`}
                             target="_blank"
                             rel="noopener noreferrer"
