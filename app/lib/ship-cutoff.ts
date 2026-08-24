@@ -145,17 +145,28 @@ export function shipStatus(orderDate?: string | null, now?: DateTime): ShipStatu
  * (2:45), not the official cutoff — the floor still has work to do in the
  * discretionary window.
  */
-export function shipCutoffCountdown(now?: DateTime): { label: string; closed: boolean } {
+export function shipCutoffCountdown(now?: DateTime): {
+  label: string;
+  closed: boolean;
+  /** Under 30 minutes left — callers pulse it red. */
+  urgent: boolean;
+} {
   const nowLocal = shipNow(now);
   const end = nowLocal.set({ ...CUTOFF_DISCRETION_END, second: 0, millisecond: 0 });
 
-  if (nowLocal >= end) return { label: "CLOSED", closed: true };
+  if (nowLocal >= end) return { label: "CLOSED", closed: true, urgent: true };
 
-  const diff = end.diff(nowLocal, ["hours", "minutes"]).toObject();
+  const diff = end.diff(nowLocal, ["hours", "minutes", "seconds"]).toObject();
   const h = Math.floor(diff.hours ?? 0);
   const m = Math.floor(diff.minutes ?? 0);
+  const sec = Math.floor(diff.seconds ?? 0);
 
-  return { label: h > 0 ? `${h}h ${m}m` : `${m}m`, closed: false };
+  // Seconds only appear inside the final hour — matches what the walls showed
+  // before this moved into a shared module; dropping them would read as a
+  // frozen clock on a screen people watch.
+  const label = h > 0 ? `${h}h ${m}m` : `${m}m ${sec.toString().padStart(2, "0")}s`;
+
+  return { label, closed: false, urgent: h * 60 + m < 30 };
 }
 
 /** Compact elapsed age — "3h 12m", "2d 4h". Kept for triage, no longer the headline. */

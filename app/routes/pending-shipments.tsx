@@ -6,6 +6,8 @@ import stylesheetUrl from "../styles/global.css";
 import { getPendingShipments } from "~/models/orders.server";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
+import { ShipBadge } from "~/components/ShipBadge";
+import { orderDateMillis, shipCutoffCountdown, shipStatus } from "~/lib/ship-cutoff";
 import { animated, useSpring } from "@react-spring/web";
 
 /**
@@ -81,52 +83,9 @@ type PendingShipment = {
   }>;
 };
 
-/** "3h 12m", "2d 4h" — compact age (no trailing "ago" so it fits tighter). */
-function ageString(iso?: string): string {
-  if (!iso) return "—";
-  const then = DateTime.fromISO(iso);
-  if (!then.isValid) return "—";
-  const diff = DateTime.now().diff(then, ["days", "hours", "minutes"]).toObject();
-  const d = Math.floor(diff.days ?? 0);
-  const h = Math.floor(diff.hours ?? 0);
-  const m = Math.floor(diff.minutes ?? 0);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
 
-function hoursOld(iso?: string): number {
-  if (!iso) return 0;
-  const then = DateTime.fromISO(iso);
-  if (!then.isValid) return 0;
-  return DateTime.now().diff(then, "hours").hours;
-}
 
-function ageBadgeClass(hours: number): string {
-  if (hours >= 72) return "bg-red-100 text-red-800 border-red-300";
-  if (hours >= 48) return "bg-orange-100 text-orange-800 border-orange-300";
-  if (hours >= 24) return "bg-yellow-100 text-yellow-800 border-yellow-300";
-  return "bg-gr-mint-100 text-gr-black border-gr-black";
-}
 
-/**
- * Ship cutoff logic. Orders placed AFTER the daily 2:45 PM cutoff
- * don't need to ship today — they get the "Next-day OK" badge in the
- * cards. Was buggy previously: threshold used 2:00 PM but the sidebar
- * countdown ends at 2:45 PM, so orders in the 2:00–2:45 window were
- * incorrectly badged as next-day even though they still had to ship.
- * Fixed to match the actual cutoff (2:45 PM ET).
- */
-function isAfterCutoffToday(iso?: string): boolean {
-  if (!iso) return false;
-  const then = DateTime.fromISO(iso).setZone("America/New_York");
-  if (!then.isValid) return false;
-  const nowLocal = DateTime.now().setZone("America/New_York");
-  const sameDay = then.hasSame(nowLocal, "day");
-  if (!sameDay) return false;
-  // After 14:45 = after 2:45 PM.
-  return then.hour > 14 || (then.hour === 14 && then.minute >= 45);
-}
 
 /**
  * Normalize the marketplace name off orderSource / advancedOptions.source
@@ -253,25 +212,6 @@ function serviceBadge(o: PendingShipment): { label: string; className: string } 
   return { label: "Standard", className: "bg-slate-200 text-slate-800 border-slate-400" };
 }
 
-/**
- * Countdown label + urgency for the daily 2:45 PM ship cutoff. Returns
- * `null` after the cutoff so callers can render a "Closed" state.
- */
-function shipCutoffState(now: Date): { label: string; className: string } {
-  const nowLocal = DateTime.fromJSDate(now).setZone("America/New_York");
-  const cutoff = nowLocal.set({ hour: 14, minute: 45, second: 0, millisecond: 0 });
-  if (nowLocal >= cutoff) {
-    return { label: "CLOSED", className: "text-red-300" };
-  }
-  const diff = cutoff.diff(nowLocal, ["hours", "minutes", "seconds"]).toObject();
-  const h = Math.floor(diff.hours ?? 0);
-  const m = Math.floor(diff.minutes ?? 0);
-  const s = Math.floor(diff.seconds ?? 0);
-  const remainingMin = h * 60 + m;
-  const urgent = remainingMin < 30;
-  const label = h > 0 ? `${h}h ${m}m` : `${m}m ${s.toString().padStart(2, "0")}s`;
-  return { label, className: urgent ? "text-red-300 animate-pulse" : "text-white" };
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Card
@@ -318,8 +258,10 @@ function flattenToCards(shipments: PendingShipment[]): CardEntry[] {
  */
 function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
   const o = c.order;
-  const hrs = hoursOld(o.orderDate);
-  const post2pm = isAfterCutoffToday(o.orderDate);
+  // One classification drives the tint, the badge and the sort — replaces the
+  // old hrs + post2pm pair, which only knew a single 2:45 boundary and so made
+  // a committed order and a discretionary one look identical.
+  const ship = shipStatus(o.orderDate);
   // MarketplaceBadge returns a full JSX pill (custom for eBay/BackMarket,
   // colored-text fallback for the rest).
   const svc = serviceBadge(o);
@@ -330,11 +272,13 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
 
   const cardBase = dim
     ? "bg-slate-100 border-slate-300 opacity-80"
-    : post2pm
-      ? "bg-sky-50 border-sky-400"
-      : "bg-white border-gr-black";
-
-  const nextDayOk = !dim && post2pm;
+    : ship.urgency === "late"
+      ? "bg-red-50 border-red-400"
+      : ship.urgency === "discretionary"
+        ? "bg-amber-50 border-amber-400"
+        : ship.urgency === "tomorrow"
+          ? "bg-slate-50 border-slate-300"
+          : "bg-white border-gr-black";
 
   return (
     <div className={`rounded-md p-2 border-2 transition-colors ${cardBase}`}>
@@ -373,25 +317,10 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
             {totalUnits} ITEMS
           </span>
         )}
-        {nextDayOk && (
-          <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-300"
-            title="Sold after 2 PM local — no same-day ship requirement"
-          >
-            Next-day OK
-          </span>
-        )}
         {/* Age chip: only on Pending. On Shipped it collapses to "—"
             (nothing meaningful to say about "how old" a completed
             shipment is on this wall) so we just skip it there. */}
-        {!dim && (
-          <span
-            className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-semibold border ml-auto ${ageBadgeClass(hrs)}`}
-            title={o.orderDate ?? ""}
-          >
-            {ageString(o.orderDate)}
-          </span>
-        )}
+        {!dim && <ShipBadge orderDate={o.orderDate} className="ml-auto" />}
       </div>
 
       {/* Footer: customer + city + STATE token + total. State is now a
@@ -627,8 +556,8 @@ export default function PendingShipments() {
   // Pending: oldest-sold first (highest priority top).
   const pendingSorted = useMemo(() => {
     return [...shipments].sort((a, b) => {
-      const at = a.orderDate ? DateTime.fromISO(a.orderDate).toMillis() : Infinity;
-      const bt = b.orderDate ? DateTime.fromISO(b.orderDate).toMillis() : Infinity;
+      const at = orderDateMillis(a.orderDate);
+      const bt = orderDateMillis(b.orderDate);
       return at - bt;
     });
   }, [shipments]);
@@ -648,7 +577,7 @@ export default function PendingShipments() {
   const formatTime = (d: Date) =>
     d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  const cutoff = shipCutoffState(currentTime);
+  const cutoff = shipCutoffCountdown(DateTime.fromJSDate(currentTime));
 
   if (!isAuthenticated) {
     return (
@@ -836,7 +765,13 @@ export default function PendingShipments() {
               Removes the redundant "SHIPS CLOSE" header from the
               previous three-line layout. */}
           <div className="text-center bg-gr-dark-hover rounded-md py-2 px-1" title="Orders received before 2:45 PM ET must ship today">
-            <div className={`font-black text-lg leading-none ${cutoff.className}`}>{cutoff.label}</div>
+            <div
+              className={`font-black text-lg leading-none ${
+                cutoff.closed ? "text-red-300" : cutoff.urgent ? "text-red-300 animate-pulse" : "text-white"
+              }`}
+            >
+              {cutoff.label}
+            </div>
             <div className="text-[9px] text-gr-beige-light mt-1 leading-tight">til 2:45 PM</div>
           </div>
 

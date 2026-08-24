@@ -6,6 +6,8 @@ import stylesheetUrl from "../styles/global.css";
 import { getPendingShipments } from "~/models/orders.server";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
+import { ShipBadge } from "~/components/ShipBadge";
+import { orderDateMillis, shipCutoffCountdown } from "~/lib/ship-cutoff";
 import { authClient, authFetch, AuthRequiredError, type AuthUser } from "~/lib/auth.client";
 
 /**
@@ -92,50 +94,9 @@ type PendingShipment = {
   }>;
 };
 
-function ageString(iso?: string): string {
-  if (!iso) return "—";
-  const then = DateTime.fromISO(iso);
-  if (!then.isValid) return "—";
-  const diff = DateTime.now().diff(then, ["days", "hours", "minutes"]).toObject();
-  const d = Math.floor(diff.days ?? 0);
-  const h = Math.floor(diff.hours ?? 0);
-  const m = Math.floor(diff.minutes ?? 0);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
 
-function hoursOld(iso?: string): number {
-  if (!iso) return 0;
-  const then = DateTime.fromISO(iso);
-  if (!then.isValid) return 0;
-  return DateTime.now().diff(then, "hours").hours;
-}
 
-/**
- * Ship-cutoff countdown label — 2:45 PM ET daily. Duplicated from
- * pending-shipments.tsx (each view has its own copy so layouts
- * evolve independently).
- */
-function shipCutoffState(now: Date): { label: string; className: string } {
-  const nowLocal = DateTime.fromJSDate(now).setZone("America/New_York");
-  const cutoff = nowLocal.set({ hour: 14, minute: 45, second: 0, millisecond: 0 });
-  if (nowLocal >= cutoff) return { label: "CLOSED", className: "text-red-300" };
-  const diff = cutoff.diff(nowLocal, ["hours", "minutes", "seconds"]).toObject();
-  const h = Math.floor(diff.hours ?? 0);
-  const m = Math.floor(diff.minutes ?? 0);
-  const s = Math.floor(diff.seconds ?? 0);
-  const urgent = h * 60 + m < 30;
-  const label = h > 0 ? `${h}h ${m}m` : `${m}m ${s.toString().padStart(2, "0")}s`;
-  return { label, className: urgent ? "text-red-300 animate-pulse" : "text-white" };
-}
 
-function ageBadgeClass(hours: number): string {
-  if (hours >= 72) return "bg-red-100 text-red-800 border-red-300";
-  if (hours >= 48) return "bg-orange-100 text-orange-800 border-orange-300";
-  if (hours >= 24) return "bg-yellow-100 text-yellow-800 border-yellow-300";
-  return "bg-gr-mint-100 text-gr-black border-gr-black";
-}
 
 function MarketplaceBadge({ order }: { order: PendingShipment }): JSX.Element | null {
   const raw = (order.orderSource ?? order.advancedOptions?.source ?? "").toLowerCase();
@@ -364,8 +325,8 @@ export default function PendingShipmentsWork() {
 
   const sorted = useMemo(() => {
     return [...shipments].sort((a, b) => {
-      const at = a.orderDate ? DateTime.fromISO(a.orderDate).toMillis() : Infinity;
-      const bt = b.orderDate ? DateTime.fromISO(b.orderDate).toMillis() : Infinity;
+      const at = orderDateMillis(a.orderDate);
+      const bt = orderDateMillis(b.orderDate);
       return at - bt;
     });
   }, [shipments]);
@@ -1915,7 +1876,6 @@ export default function PendingShipmentsWork() {
                 )}
                 {filtered.map((r, idx) => {
                   const o = r.order;
-                  const hrs = hoursOld(o.orderDate);
                   const svc = serviceBadge(o);
                   const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
                   const multi = r.items.length > 1;
@@ -1926,12 +1886,7 @@ export default function PendingShipmentsWork() {
                       className={`border-t border-slate-200 hover:bg-slate-50 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/50"}`}
                     >
                       <td className="px-2 py-2 whitespace-nowrap align-top">
-                        <span
-                          className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${ageBadgeClass(hrs)}`}
-                          title={o.orderDate ?? ""}
-                        >
-                          {ageString(o.orderDate)}
-                        </span>
+                        <ShipBadge orderDate={o.orderDate} />
                       </td>
                       <td className="px-2 py-2 font-mono font-bold text-gray-900 align-top">
                         {multi && (
@@ -3479,10 +3434,13 @@ export default function PendingShipmentsWork() {
           </div>
 
           {(() => {
-            const cutoff = shipCutoffState(currentTime);
+            const cutoff = shipCutoffCountdown(DateTime.fromJSDate(currentTime));
             return (
-              <div className="text-center bg-gr-dark-hover rounded-md py-2 px-1" title="Orders received before 2:45 PM ET must ship today">
-                <div className={`font-black text-lg leading-none ${cutoff.className}`}>{cutoff.label}</div>
+              <div
+                className="text-center bg-gr-dark-hover rounded-md py-2 px-1"
+                title="Official cutoff 2:00 PM ET. 2:00-2:45 is discretionary. After 2:45 nothing else ships today."
+              >
+                <div className={`font-black text-lg leading-none ${cutoff.closed ? "text-red-300" : ""}`}>{cutoff.label}</div>
                 <div className="text-[9px] text-gr-beige-light mt-1 leading-tight">til 2:45 PM</div>
               </div>
             );
