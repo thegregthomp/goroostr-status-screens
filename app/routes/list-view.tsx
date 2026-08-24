@@ -9,6 +9,7 @@ import sortBy from "lodash/sortBy";
 import indexOf from "lodash/indexOf";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
+import { OrderAgePill } from "~/components/OrderAgePill";
 
 export function links() {
   return [{ rel: "stylesheet", href: stylesheetUrl }];
@@ -675,6 +676,9 @@ export default function ListView() {
                                   <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${isTradeIn ? 'bg-rose-100 text-rose-800' : 'bg-purple-100 text-purple-800'}`}>
                                     B#{orderDetails.id}
                                   </span>
+                                  {/* Order age — how long ago it actually came in. Separate from the
+                                      days-in-status badge below, which resets on every status change. */}
+                                  <OrderAgePill createdAt={order.created_at} />
                                   {daysInStatus > 2 && (
                                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
                                       daysInStatus > 5 ? 'bg-red-100 text-red-800' : 
@@ -784,6 +788,9 @@ export default function ListView() {
                                   <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                                     Custom
                                   </span>
+                                  {/* Order age — how long ago it actually came in. Separate from the
+                                      days-in-status badge below, which resets on every status change. */}
+                                  <OrderAgePill createdAt={order.created_at} />
                                   {daysInStatus > 2 && (
                                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
                                       daysInStatus > 5 ? 'bg-red-100 text-red-800' : 
@@ -877,6 +884,9 @@ export default function ListView() {
                                   <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-800">
                                     ITAD
                                   </span>
+                                  {/* Order age — how long ago it actually came in. Separate from the
+                                      days-in-status badge below, which resets on every status change. */}
+                                  <OrderAgePill createdAt={order.created_at} />
                                   {daysInStatus > 2 && (
                                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
                                       daysInStatus > 5 ? 'bg-red-100 text-red-800' :
@@ -983,6 +993,9 @@ export default function ListView() {
                                 )}
                                 
                                 {/* Days in Status */}
+                                {/* Order age — how long ago it actually came in. Separate from the
+                                    days-in-status badge below, which resets on every status change. */}
+                                <OrderAgePill createdAt={order.created_at} />
                                 {daysInStatus > 2 && (
                                   <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
                                     daysInStatus > 5 ? 'bg-red-100 text-red-800' : 
@@ -1590,6 +1603,9 @@ export default function ListView() {
                                     B#{orderDetails?.id}
                                   </span>
                                 )}
+                                {/* Order age — how long ago it actually came in. Separate from the
+                                    days-in-status badge below, which resets on every status change. */}
+                                <OrderAgePill createdAt={order.created_at} />
                                 {daysInStatus > 2 && (
                                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                                     daysInStatus > 5 ? 'bg-red-100 text-red-800' : 
