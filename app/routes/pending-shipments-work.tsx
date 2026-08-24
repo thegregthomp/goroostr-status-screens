@@ -2202,6 +2202,22 @@ export default function PendingShipmentsWork() {
                     </span>
                   )}
                 </div>
+                {/* Marketplace + sale price. Both drive decisions made right
+                    here — signature thresholds are per-marketplace and keyed
+                    off order value ($750 eBay, $200 Back Market) — but ops
+                    previously had to close the modal and read them off the
+                    row to sanity-check what the rules had done. */}
+                <div className="flex items-center gap-2 mt-1">
+                  <MarketplaceBadge order={pickerRow.order} />
+                  {typeof pickerRow.order.orderTotal === "number" && (
+                    <span
+                      className="text-sm font-black text-gr-black"
+                      title="Sale price — what the buyer paid"
+                    >
+                      ${pickerRow.order.orderTotal.toFixed(2)}
+                    </span>
+                  )}
+                </div>
               </div>
               <button
                 onClick={closePicker}
