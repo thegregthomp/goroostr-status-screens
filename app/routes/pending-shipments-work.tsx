@@ -98,6 +98,31 @@ type PendingShipment = {
 
 
 
+/**
+ * Which pile a row belongs to. Jon asked for BackMarket and eBay grouped
+ * separately so the floor can work one marketplace at a time — they pack and
+ * label differently.
+ *
+ * Reuses the same orderSource/advancedOptions.source reading as
+ * MarketplaceBadge so a row's badge and its group can never disagree.
+ */
+type MarketplaceGroup = "backmarket" | "ebay" | "other";
+
+const GROUP_ORDER: MarketplaceGroup[] = ["backmarket", "ebay", "other"];
+
+const GROUP_LABEL: Record<MarketplaceGroup, string> = {
+  backmarket: "Back Market",
+  ebay: "eBay",
+  other: "Other marketplaces",
+};
+
+function marketplaceGroup(order: PendingShipment): MarketplaceGroup {
+  const raw = (order.orderSource ?? order.advancedOptions?.source ?? "").toLowerCase();
+  if (raw.includes("backmarket") || raw.includes("back_market")) return "backmarket";
+  if (raw.includes("ebay")) return "ebay";
+  return "other";
+}
+
 function MarketplaceBadge({ order }: { order: PendingShipment }): JSX.Element | null {
   const raw = (order.orderSource ?? order.advancedOptions?.source ?? "").toLowerCase();
   if (!raw) return null;
@@ -371,6 +396,16 @@ export default function PendingShipmentsWork() {
     });
   };
   const filtered = useMemo(() => filterRows(rows), [rows, query]);
+
+  // Group by marketplace for display (Jon #1) WITHOUT disturbing the age sort
+  // inside each group — a stable partition, not a re-sort.
+  const grouped = useMemo(() => {
+    const buckets = new Map<MarketplaceGroup, typeof filtered>();
+    for (const g of GROUP_ORDER) buckets.set(g, []);
+    for (const r of filtered) buckets.get(marketplaceGroup(r.order))!.push(r);
+    // Drop empty groups so an unused marketplace doesn't leave a stray header.
+    return GROUP_ORDER.flatMap((g) => buckets.get(g) ?? []);
+  }, [filtered]);
   const filteredShipped = useMemo(() => filterRows(shippedRows), [shippedRows, query]);
 
   // KAN-44 Phase C — combine detection. Group pending rows by
@@ -1890,22 +1925,37 @@ export default function PendingShipmentsWork() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 && (
+                {grouped.length === 0 && (
                   <tr>
                     <td colSpan={10} className="text-center text-gray-500 py-8">
                       {rows.length === 0 ? "No pending shipments." : "No rows match that search."}
                     </td>
                   </tr>
                 )}
-                {filtered.map((r, idx) => {
+                {grouped.map((r, idx) => {
                   const o = r.order;
                   const svc = serviceBadge(o);
                   const customer = o.shipTo?.name ?? o.customerEmail ?? "—";
                   const multi = r.items.length > 1;
                   const key = `${o.orderId ?? o.orderNumber}`;
+                  // Header whenever the marketplace changes. Rows are already
+                  // partitioned, so this fires once per non-empty group.
+                  const group = marketplaceGroup(o);
+                  const showGroupHeader = idx === 0 || marketplaceGroup(grouped[idx - 1].order) !== group;
+                  const groupCount = grouped.filter((x) => marketplaceGroup(x.order) === group).length;
                   return (
+                    <React.Fragment key={key}>
+                    {showGroupHeader && (
+                      <tr className="bg-gr-black text-white">
+                        <td colSpan={10} className="px-2 py-1.5 text-xs font-black uppercase tracking-wider">
+                          {GROUP_LABEL[group]}
+                          <span className="ml-2 font-semibold text-gr-beige-light">
+                            {groupCount} {groupCount === 1 ? "row" : "rows"}
+                          </span>
+                        </td>
+                      </tr>
+                    )}
                     <tr
-                      key={key}
                       className={`border-t border-slate-200 hover:bg-slate-50 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/50"}`}
                     >
                       <td className="px-2 py-2 whitespace-nowrap align-top">
@@ -1980,6 +2030,7 @@ export default function PendingShipmentsWork() {
                         </div>
                       </td>
                     </tr>
+                    </React.Fragment>
                   );
                 })}
               </tbody>
