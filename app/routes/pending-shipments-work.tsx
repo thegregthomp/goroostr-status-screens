@@ -323,13 +323,24 @@ export default function PendingShipmentsWork() {
     }
   }, 60000);
 
+  // Jon asked for a sort-by-age control "similar to ShipStation". The board
+  // was already age-sorted, just hardcoded oldest-first with no way to see or
+  // change it — so the behaviour existed but was invisible. Default is
+  // unchanged; "Newest first" is the new affordance.
+  const [sortDir, setSortDir] = useState<"oldest" | "newest">("oldest");
+
   const sorted = useMemo(() => {
     return [...shipments].sort((a, b) => {
       const at = orderDateMillis(a.orderDate);
       const bt = orderDateMillis(b.orderDate);
-      return at - bt;
+      // Undated rows sink to the bottom either way — orderDateMillis returns
+      // Infinity for them, so don't just flip the comparison.
+      if (at === bt) return 0;
+      if (at === Infinity) return 1;
+      if (bt === Infinity) return -1;
+      return sortDir === "oldest" ? at - bt : bt - at;
     });
-  }, [shipments]);
+  }, [shipments, sortDir]);
 
   const rows = useMemo(() => toRows(sorted), [sorted]);
 
@@ -1840,6 +1851,18 @@ export default function PendingShipmentsWork() {
             placeholder="Search SKU, order #, customer, or city…"
             className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
           />
+          <label className="flex items-center gap-2 text-sm whitespace-nowrap">
+            <span className="text-gray-600 font-semibold">Sort</span>
+            <select
+              value={sortDir}
+              onChange={(e) => setSortDir(e.target.value as "oldest" | "newest")}
+              className="border border-gray-300 rounded px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
+              title="Order age — oldest first is the default so the most overdue work stays on top"
+            >
+              <option value="oldest">Oldest first</option>
+              <option value="newest">Newest first</option>
+            </select>
+          </label>
         </div>
         {loadError && (
           <div className="border-2 border-red-400 bg-red-50 text-red-800 rounded px-3 py-2 text-sm mb-3">
