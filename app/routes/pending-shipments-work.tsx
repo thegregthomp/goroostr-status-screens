@@ -626,10 +626,21 @@ export default function PendingShipmentsWork() {
   // are empty or nothing meets the transit budget.
   const recommendation = useMemo(() => {
     if (rates.length === 0) return null;
-    const eligible = rates.filter((r) => {
+    let eligible = rates.filter((r) => {
       if (r.transitDays == null) return false;
       return r.transitDays <= maxTransitDays;
     });
+    // Direct Signature Required is FedEx-only (Adam 2026-08-25). The
+    // backend downgrades to plain `signature` on UPS/USPS in the rate
+    // fetch so those carriers still return rates for comparison — but
+    // for the RECOMMENDATION auto-pick we need to honor ops's explicit
+    // signature choice, which means filtering the auto-picker to
+    // FedEx only. Otherwise UPS's plain-sig rate would auto-swap in
+    // and silently downgrade the signature level the user picked.
+    if (confirmation === "direct_signature") {
+      const fedexOnly = eligible.filter((r) => r.carrierCode === "fedex");
+      if (fedexOnly.length > 0) eligible = fedexOnly;
+    }
     if (eligible.length === 0) return null;
 
     const isUsps = (r: typeof eligible[number]) => r.carrierCode === "stamps_com";
@@ -692,6 +703,9 @@ export default function PendingShipmentsWork() {
     uspsGateOK,
     marketplaceForRec,
     orderTotalForRec,
+    // Recompute when signature changes so direct_signature can filter
+    // the auto-pick to FedEx-only (see the eligible filter above).
+    confirmation,
   ]);
 
   // Back-compat alias — most sites still use `recommendedRate` and
@@ -2596,26 +2610,49 @@ export default function PendingShipmentsWork() {
 
                 {/* Signature / confirmation dropdown — Adam's ask.
                     Matches ShipStation's fixed values. Persists to the
-                    order via `confirmation` on the print-label payload. */}
+                    order via `confirmation` on the print-label payload.
+                    "Direct Signature Required" is FedEx-only and stays
+                    visible in the list so ops can express the intent
+                    regardless of the current carrier — picking it
+                    snaps the carrier to FedEx (see onChange below).
+                    Prior behavior: option was hidden unless carrier
+                    was already fedex, which meant picking it in one
+                    state then having the auto-picker swap to UPS made
+                    the option vanish while the internal state still
+                    said direct_signature (Adam 2026-08-25). */}
                 <div>
                   <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
                     Signature
                   </label>
                   <select
                     value={confirmation}
-                    onChange={(e) => setConfirmation(e.target.value)}
+                    onChange={(e) => {
+                      const newConfirmation = e.target.value;
+                      setConfirmation(newConfirmation);
+                      // Direct Signature Required is FedEx-only. If
+                      // ops picks it while another carrier is active,
+                      // snap the carrier to FedEx AND lock the manual
+                      // override so the auto-picker doesn't swap back
+                      // to UPS on the next rate refresh. Mirror of the
+                      // reverse rule on the Carrier dropdown at
+                      // ~line 2766 that downgrades direct_signature to
+                      // signature when the shipper switches OFF FedEx.
+                      if (
+                        newConfirmation === "direct_signature" &&
+                        pickedCarrier !== "fedex"
+                      ) {
+                        setPickedCarrier("fedex");
+                        setPickedService(null);
+                        setRateManuallyOverridden(true);
+                      }
+                    }}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
                   >
                     <option value="none">None</option>
                     <option value="delivery">Delivery Confirmation</option>
                     <option value="signature">Signature Required</option>
                     <option value="adult_signature">Adult Signature Required</option>
-                    {/* direct_signature is a FedEx-only option — UPS
-                        and USPS both reject it at label-create time.
-                        Hide when a non-FedEx carrier is picked. */}
-                    {pickedCarrier === "fedex" && (
-                      <option value="direct_signature">Direct Signature Required (FedEx)</option>
-                    )}
+                    <option value="direct_signature">Direct Signature Required (FedEx)</option>
                   </select>
                 </div>
 
@@ -3327,17 +3364,26 @@ export default function PendingShipmentsWork() {
                               <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">Signature</label>
                               <select
                                 value={s.confirmation}
-                                onChange={(e) => updateSplitShipment(si, { confirmation: e.target.value })}
+                                onChange={(e) => {
+                                  const newConfirmation = e.target.value;
+                                  // Picking Direct (FedEx) snaps the
+                                  // shipment's carrier to FedEx —
+                                  // matches the single-shipment
+                                  // dropdown at ~line 2620.
+                                  updateSplitShipment(si, {
+                                    confirmation: newConfirmation,
+                                    ...(newConfirmation === "direct_signature" && s.pickedCarrier !== "fedex"
+                                      ? { pickedCarrier: "fedex", pickedService: null }
+                                      : {}),
+                                  });
+                                }}
                                 className="w-full text-xs border border-gray-300 rounded px-1.5 py-1"
                               >
                                 <option value="none">None</option>
                                 <option value="delivery">Delivery Confirmation</option>
                                 <option value="signature">Signature Required</option>
                                 <option value="adult_signature">Adult Signature</option>
-                                {/* FedEx-only — hidden for UPS/USPS */}
-                                {s.pickedCarrier === "fedex" && (
-                                  <option value="direct_signature">Direct (FedEx)</option>
-                                )}
+                                <option value="direct_signature">Direct (FedEx)</option>
                               </select>
                             </div>
                             <div className="col-span-2">
@@ -3764,17 +3810,24 @@ export default function PendingShipmentsWork() {
                     </select>
                     <select
                       value={combineForm.confirmation}
-                      onChange={(e) => setCombineForm({ ...combineForm, confirmation: e.target.value })}
+                      onChange={(e) => {
+                        const newConfirmation = e.target.value;
+                        // Picking Direct (FedEx) snaps carrier to FedEx.
+                        setCombineForm({
+                          ...combineForm,
+                          confirmation: newConfirmation,
+                          ...(newConfirmation === "direct_signature" && combineForm.carrierCode !== "fedex"
+                            ? { carrierCode: "fedex", serviceCode: "" }
+                            : {}),
+                        });
+                      }}
                       className="text-sm border border-gray-300 rounded px-2 py-1"
                     >
                       <option value="none">Signature: none</option>
                       <option value="delivery">Delivery Confirmation</option>
                       <option value="signature">Signature Required</option>
                       <option value="adult_signature">Adult Signature</option>
-                      {/* FedEx-only — hidden for UPS/USPS */}
-                      {combineForm.carrierCode === "fedex" && (
-                        <option value="direct_signature">Direct (FedEx)</option>
-                      )}
+                      <option value="direct_signature">Direct (FedEx)</option>
                     </select>
                     <div className="col-span-2">
                       <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">
@@ -4021,17 +4074,24 @@ export default function PendingShipmentsWork() {
                     </select>
                     <select
                       value={manualShip.confirmation}
-                      onChange={(e) => setManualShip({ ...manualShip, confirmation: e.target.value })}
+                      onChange={(e) => {
+                        const newConfirmation = e.target.value;
+                        // Picking Direct (FedEx) snaps carrier to FedEx.
+                        setManualShip({
+                          ...manualShip,
+                          confirmation: newConfirmation,
+                          ...(newConfirmation === "direct_signature" && manualShip.carrierCode !== "fedex"
+                            ? { carrierCode: "fedex", serviceCode: "" }
+                            : {}),
+                        });
+                      }}
                       className="text-sm border border-gray-300 rounded px-2 py-1"
                     >
                       <option value="none">Signature: none</option>
                       <option value="delivery">Delivery Confirmation</option>
                       <option value="signature">Signature Required</option>
                       <option value="adult_signature">Adult Signature</option>
-                      {/* FedEx-only — hidden for UPS/USPS */}
-                      {manualShip.carrierCode === "fedex" && (
-                        <option value="direct_signature">Direct (FedEx)</option>
-                      )}
+                      <option value="direct_signature">Direct (FedEx)</option>
                     </select>
                     <div className="col-span-2">
                       <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">
