@@ -223,7 +223,17 @@ type OrderItem = NonNullable<PendingShipment["items"]>[number];
 
 type WorkRow = {
   order: PendingShipment;
+  // Display list — one entry per ShipStation orderItem, with the
+  // original `quantity` intact so the "× N" chip renders next to
+  // multi-unit lines. Used everywhere ops just READ the order's
+  // contents.
   items: OrderItem[];
+  // Pick-slot list — one entry per physical unit. A `quantity: 2`
+  // eBay line contributes TWO entries here, each with quantity=1, so
+  // the picker requires two inventory picks instead of one (KAN-64,
+  // Adam 2026-08-24, IPS#7499). Used by the picker + payload build
+  // only; kept separate from `items` so display doesn't fan out.
+  unitSlots: OrderItem[];
 };
 
 type InventoryMatch = {
@@ -235,10 +245,27 @@ type InventoryMatch = {
   created_at: string | null;
 };
 
+// Expand items[] by quantity for the picker: one entry per physical
+// unit. See WorkRow.unitSlots docblock.
+function expandItemsByQuantity(items: OrderItem[]): OrderItem[] {
+  const out: OrderItem[] = [];
+  for (const it of items) {
+    const qty = Math.max(1, Math.floor(it.quantity ?? 1));
+    for (let i = 0; i < qty; i++) {
+      out.push({ ...it, quantity: 1 });
+    }
+  }
+  return out;
+}
+
 function toRows(shipments: PendingShipment[]): WorkRow[] {
   return shipments
     .filter((o) => (o.items ?? []).length > 0)
-    .map((o) => ({ order: o, items: o.items ?? [] }));
+    .map((o) => ({
+      order: o,
+      items: o.items ?? [],
+      unitSlots: expandItemsByQuantity(o.items ?? []),
+    }));
 }
 
 // -----------------------------------------------------------------------
@@ -804,11 +831,13 @@ export default function PendingShipmentsWork() {
     insuranceProvider: "carrier",
   });
 
-  // Enter split mode: seed with 2 shipments and half the items in each.
-  // Shipper immediately sees a workable starting state.
+  // Enter split mode: seed with 2 shipments and half the units in each.
+  // Shipper immediately sees a workable starting state. Split works over
+  // physical units (unitSlots), not orderItems, so a qty=2 single-SKU
+  // order can be split as two separate shipments (KAN-64).
   const enterSplitMode = () => {
     if (!pickerRow) return;
-    const n = pickerRow.items.length;
+    const n = pickerRow.unitSlots.length;
     const half = Math.ceil(n / 2);
     const a = blankSplitShipment();
     const b = blankSplitShipment();
@@ -1202,8 +1231,10 @@ export default function PendingShipmentsWork() {
       return next;
     });
 
+  // Pick-slot completeness: one pick per PHYSICAL UNIT (unitSlots),
+  // not per orderItem — so a qty=2 line requires two picks (KAN-64).
   const allPicked = pickerRow
-    ? pickerRow.items.every((_, i) => picks[i] !== undefined)
+    ? pickerRow.unitSlots.every((_, i) => picks[i] !== undefined)
     : false;
 
   const goToConfirm = () => {
@@ -1226,8 +1257,11 @@ export default function PendingShipmentsWork() {
 
   const firePrint = async () => {
     if (!pickerRow) return;
-    const inventoryIds = pickerRow.items.map((_, i) => picks[i]?.id).filter(Boolean) as number[];
-    if (inventoryIds.length !== pickerRow.items.length) {
+    // Payload = one inventory ID per physical unit (unitSlots), not
+    // per orderItem — matches how the backend counts expected units
+    // and how throughput/sales link inventory → IPS (KAN-64).
+    const inventoryIds = pickerRow.unitSlots.map((_, i) => picks[i]?.id).filter(Boolean) as number[];
+    if (inventoryIds.length !== pickerRow.unitSlots.length) {
       setPrintError("One or more items don't have an inventory pick.");
       return;
     }
@@ -1354,14 +1388,15 @@ export default function PendingShipmentsWork() {
     if (!pickerRow) return;
     setPrintError(null);
 
-    // Client-side validation — every item must be allocated to
+    // Client-side validation — every UNIT must be allocated to
     // exactly one shipment; every shipment needs its own carrier +
-    // service + weight.
-    const totalItems = pickerRow.items.length;
+    // service + weight. Split-mode iterates unitSlots so a qty=2
+    // single-SKU order can go into two separate shipments (KAN-64).
+    const totalItems = pickerRow.unitSlots.length;
     const assigned = new Set<number>();
     for (const s of splitShipments) for (const i of s.itemIndices) assigned.add(i);
     if (assigned.size !== totalItems) {
-      setPrintError(`Every item must be assigned to a shipment. ${totalItems - assigned.size} unassigned.`);
+      setPrintError(`Every unit must be assigned to a shipment. ${totalItems - assigned.size} unassigned.`);
       return;
     }
     for (let i = 0; i < splitShipments.length; i++) {
@@ -2173,8 +2208,8 @@ export default function PendingShipmentsWork() {
                     ? "Label created"
                     : confirmMode
                       ? "Confirm & print"
-                      : pickerRow.items.length > 1
-                        ? `Pick inventory (${Object.keys(picks).length}/${pickerRow.items.length})`
+                      : pickerRow.unitSlots.length > 1
+                        ? `Pick inventory (${Object.keys(picks).length}/${pickerRow.unitSlots.length})`
                         : "Pick inventory"}
                 </div>
                 <div className="text-xs text-gray-500 font-mono">
@@ -2349,10 +2384,10 @@ export default function PendingShipmentsWork() {
                     OFF: the current single-shipment UI below is rendered
                     as-is. ON: the single-shipment UI hides and the
                     split panel below takes over. */}
-                {pickerRow.items.length >= 2 && (
+                {pickerRow.unitSlots.length >= 2 && (
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
                     <div className="text-xs text-gray-600">
-                      This order has {pickerRow.items.length} items.
+                      This order has {pickerRow.unitSlots.length} units.
                     </div>
                     {!splitMode ? (
                       <button
@@ -2414,10 +2449,10 @@ export default function PendingShipmentsWork() {
                   </div>
                   <div>
                     <div className="text-[10px] text-gray-500 uppercase tracking-wider">
-                      Inventory ({pickerRow.items.length})
+                      Inventory ({pickerRow.unitSlots.length})
                     </div>
                     <div className="text-xs font-mono text-gr-black leading-tight">
-                      {pickerRow.items.map((_, i) => picks[i]?.id).filter(Boolean).join(", ")}
+                      {pickerRow.unitSlots.map((_, i) => picks[i]?.id).filter(Boolean).join(", ")}
                     </div>
                     {/* Purchase price — cost basis for the picked
                         inventory (Adam 2026-08-13). Lets ops eyeball
@@ -2425,7 +2460,7 @@ export default function PendingShipmentsWork() {
                         Summed across all picks so multi-item orders
                         show one number. */}
                     {(() => {
-                      const totalPaid = pickerRow.items.reduce(
+                      const totalPaid = pickerRow.unitSlots.reduce(
                         (sum, _, i) => sum + (Number(picks[i]?.price_paid ?? 0) || 0),
                         0
                       );
@@ -3180,7 +3215,9 @@ export default function PendingShipmentsWork() {
                 {splitMode && (
                   <div className="space-y-3">
                     {splitShipments.map((s, si) => {
-                      const totalItems = pickerRow.items.length;
+                      // Split works on physical units (unitSlots) so a
+                      // qty=2 single-SKU order can split as 1+1 (KAN-64).
+                      const totalItems = pickerRow.unitSlots.length;
                       const w = (Number(s.weightLb) || 0) * 16 + (Number(s.weightOz) || 0);
                       return (
                         <div key={si} className="border border-purple-300 bg-purple-50/40 rounded-lg p-3 space-y-2">
@@ -3188,7 +3225,7 @@ export default function PendingShipmentsWork() {
                             <div className="text-sm font-bold text-purple-900">
                               Shipment {si + 1} ·{" "}
                               <span className="font-normal text-purple-700">
-                                {s.itemIndices.length}/{totalItems} items
+                                {s.itemIndices.length}/{totalItems} units
                               </span>
                             </div>
                             {splitShipments.length > 2 && (
@@ -3202,14 +3239,14 @@ export default function PendingShipmentsWork() {
                             )}
                           </div>
 
-                          {/* Item allocation — every item in the order
+                          {/* Item allocation — every UNIT in the order
                               renders as a chip. The chip is highlighted
                               on the shipment card it currently belongs
                               to. Click on another shipment's card to
-                              move the item there (see the "Move here"
-                              links below). */}
+                              move the item there. Uses unitSlots so a
+                              qty=2 order renders 2 chips (KAN-64). */}
                           <div className="flex flex-wrap gap-1">
-                            {pickerRow.items.map((it, ii) => {
+                            {pickerRow.unitSlots.map((it, ii) => {
                               const isHere = s.itemIndices.includes(ii);
                               return (
                                 <button
@@ -3425,16 +3462,19 @@ export default function PendingShipmentsWork() {
                 )}
               </div>
             ) : (
-              /* STAGE 1: Picker — one section per line item in the order. */
+              /* STAGE 1: Picker — one section per PHYSICAL UNIT
+                 (quantity-expanded unitSlots). A qty=2 line renders
+                 as two sections so ops picks two distinct inventory
+                 rows (KAN-64). */
               <>
-                {pickerRow.items.length > 1 && (
+                {pickerRow.unitSlots.length > 1 && (
                   <div className="px-4 py-2 border-b border-slate-200 bg-purple-50 text-xs text-purple-900">
-                    <strong>{pickerRow.items.length}-item order.</strong> Pick one inventory unit
-                    for each SKU below. All go on the same label.
+                    <strong>{pickerRow.unitSlots.length}-unit order.</strong> Pick one inventory item
+                    for each unit below. All go on the same label.
                   </div>
                 )}
                 <div className="max-h-[60vh] overflow-y-auto">
-                  {pickerRow.items.map((item, i) => (
+                  {pickerRow.unitSlots.map((item, i) => (
                     <ItemPickerSection
                       key={`${pickerRow.order.orderId}-${i}`}
                       apiEndpoint={apiEndpoint}
@@ -3447,7 +3487,7 @@ export default function PendingShipmentsWork() {
                 </div>
                 <div className="flex items-center justify-between gap-2 px-4 py-3 border-t border-slate-200">
                   <div className="text-xs text-gray-500">
-                    {Object.keys(picks).length}/{pickerRow.items.length} picked
+                    {Object.keys(picks).length}/{pickerRow.unitSlots.length} picked
                   </div>
                   <button
                     onClick={goToConfirm}
