@@ -2095,7 +2095,7 @@ export default function PendingShipmentsWork() {
                           {combinePeersFor(r).length > 0 && (
                             <button
                               onClick={() => openCombine(r)}
-                              className="text-[10px] px-1.5 py-0.5 rounded border border-purple-300 bg-purple-50 text-purple-800 hover:bg-purple-100"
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-purple-300 bg-purple-50 text-purple-800 hover:bg-purple-100 whitespace-nowrap"
                               title={`This buyer/address has ${combinePeersFor(r).length + 1} pending orders. Combine into one label.`}
                             >
                               🔗 Combine with {combinePeersFor(r).length}
