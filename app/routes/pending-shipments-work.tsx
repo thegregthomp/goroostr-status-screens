@@ -1519,7 +1519,30 @@ export default function PendingShipmentsWork() {
   // label, every source order marked shipped.
   const [combineOpen, setCombineOpen] = useState(false);
   const [combineSourceRows, setCombineSourceRows] = useState<WorkRow[]>([]);
-  const [combineInventoryIds, setCombineInventoryIds] = useState<number[]>([]);
+  // Per-unit inventory picks across the combined orders. Key is
+  // `${orderId}:${unitIndex}` where unitIndex indexes into that row's
+  // unitSlots (quantity-expanded per KAN-64). Same picker component as
+  // the single-order flow, same SKU-scoped search, same "one pick per
+  // physical unit" gate — no more free-text CSV field. Combined
+  // payload's inventoryIds is derived from this map in order-stable
+  // order (see combineInventoryIds memo below).
+  const [combinePicks, setCombinePicks] = useState<Record<string, InventoryMatch>>({});
+  const combineInventoryIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const r of combineSourceRows) {
+      for (let i = 0; i < r.unitSlots.length; i++) {
+        const p = combinePicks[`${r.order.orderId}:${i}`];
+        if (p) ids.push(p.id);
+      }
+    }
+    return ids;
+  }, [combineSourceRows, combinePicks]);
+  const combineTotalUnits = useMemo(
+    () => combineSourceRows.reduce((n, r) => n + r.unitSlots.length, 0),
+    [combineSourceRows]
+  );
+  const allCombinePicked =
+    combineTotalUnits > 0 && combineInventoryIds.length === combineTotalUnits;
   const [combineForm, setCombineForm] = useState({
     weightLb: "",
     weightOz: "",
@@ -1545,7 +1568,7 @@ export default function PendingShipmentsWork() {
   const openCombine = (primary: WorkRow) => {
     const peers = combinePeersFor(primary);
     setCombineSourceRows([primary, ...peers]);
-    setCombineInventoryIds([]);
+    setCombinePicks({});
     setCombineForm({
       weightLb: "", weightOz: "",
       carrierCode: "", serviceCode: "",
@@ -1561,7 +1584,7 @@ export default function PendingShipmentsWork() {
     setCombineOpen(false);
     setCombineResult(null);
     setCombineSourceRows([]);
-    setCombineInventoryIds([]);
+    setCombinePicks({});
   };
 
   // Load carriers + services + packages on combine modal open / carrier change.
@@ -1604,8 +1627,10 @@ export default function PendingShipmentsWork() {
       setCombineError("Need at least 2 orders to combine.");
       return;
     }
-    if (combineInventoryIds.length === 0) {
-      setCombineError("Pick at least one inventory unit for the combined shipment.");
+    if (!allCombinePicked) {
+      setCombineError(
+        `Pick inventory for every unit — ${combineInventoryIds.length}/${combineTotalUnits} picked so far.`
+      );
       return;
     }
     if (wOz <= 0) { setCombineError("Enter a weight."); return; }
@@ -3719,57 +3744,65 @@ export default function PendingShipmentsWork() {
               </div>
             ) : (
               <div className="px-4 py-4 space-y-3">
-                {/* Source orders summary + inventory picker */}
+                {/* Per-unit inventory picker, grouped by source order.
+                    Same ItemPickerSection component as the single-order
+                    Print flow — SKU-scoped search, one pick per physical
+                    unit (KAN-64 unitSlots). Replaces the earlier
+                    comma-separated inventory-ids text input, which was
+                    both a worse UX and broken (the controlled input's
+                    onChange parsed to numbers on every keystroke, so
+                    typing a comma was instantly stripped on the next
+                    render). Print button gates on every unit having a
+                    pick. */}
                 <div>
-                  <div className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
-                    Items across {combineSourceRows.length} orders
+                  <div className="flex items-baseline justify-between mb-1">
+                    <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                      Pick inventory
+                    </div>
+                    <div className={
+                      "text-[11px] font-mono " +
+                      (allCombinePicked ? "text-emerald-700" : "text-amber-800")
+                    }>
+                      {combineInventoryIds.length}/{combineTotalUnits} picked
+                    </div>
                   </div>
-                  <div className="space-y-2 max-h-72 overflow-y-auto border border-slate-200 rounded p-2 bg-slate-50/40">
+                  <div className="max-h-[50vh] overflow-y-auto border border-slate-200 rounded bg-white">
                     {combineSourceRows.map((r) => (
-                      <div key={r.order.orderId} className="text-xs">
-                        <div className="font-bold text-gr-black">
-                          Order #{r.order.orderNumber}{" "}
+                      <div key={r.order.orderId} className="border-b border-slate-200 last:border-b-0">
+                        <div className="px-3 py-1.5 bg-slate-50 text-xs font-bold text-gr-black sticky top-0">
+                          Order #{r.order.orderNumber}
                           <span className="text-gray-500 font-normal">
-                            · ${Number(r.order.orderTotal ?? 0).toFixed(2)}
+                            {" "}· ${Number(r.order.orderTotal ?? 0).toFixed(2)}
                           </span>
+                          {r.unitSlots.length > 1 && (
+                            <span className="ml-2 text-[10px] font-normal text-gr-green-dark">
+                              {r.unitSlots.length} units
+                            </span>
+                          )}
                         </div>
-                        <ul className="list-disc pl-5 text-gray-700 mt-0.5">
-                          {r.items.map((it, i) => (
-                            <li key={i}>
-                              <span className="font-mono">{it.sku ?? "—"}</span>{" "}
-                              {it.name && <span className="text-gray-500">— {it.name}</span>}
-                              {(it.quantity ?? 0) > 1 && <span className="ml-1 text-gr-green-dark">×{it.quantity}</span>}
-                            </li>
-                          ))}
-                        </ul>
+                        {r.unitSlots.map((slot, i) => {
+                          const key = `${r.order.orderId}:${i}`;
+                          return (
+                            <ItemPickerSection
+                              key={key}
+                              apiEndpoint={apiEndpoint}
+                              item={slot}
+                              picked={combinePicks[key]}
+                              onPick={(inv) =>
+                                setCombinePicks((prev) => ({ ...prev, [key]: inv }))
+                              }
+                              onUnpick={() =>
+                                setCombinePicks((prev) => {
+                                  const next = { ...prev };
+                                  delete next[key];
+                                  return next;
+                                })
+                              }
+                            />
+                          );
+                        })}
                       </div>
                     ))}
-                  </div>
-                </div>
-
-                {/* Inventory ids picker — free-form. Ops types comma-
-                    separated inventory ids they've already scanned or
-                    selected from another surface. v1 keeps this simple;
-                    integrating with the per-item ItemPickerSection
-                    (from the split flow) is a follow-up if needed. */}
-                <div>
-                  <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block mb-1">
-                    Inventory IDs (comma-separated) *
-                  </label>
-                  <input
-                    placeholder="e.g. 12345, 12346, 12347"
-                    value={combineInventoryIds.join(", ")}
-                    onChange={(e) => {
-                      const parsed = e.target.value
-                        .split(",")
-                        .map((s) => Number(s.trim()))
-                        .filter((n) => Number.isFinite(n) && n > 0);
-                      setCombineInventoryIds(parsed);
-                    }}
-                    className="w-full text-sm border border-gray-300 rounded px-2 py-1"
-                  />
-                  <div className="text-[10px] text-gray-500 mt-0.5">
-                    Paste inventory IDs from your scan or Nova. All get tracking# attached at once.
                   </div>
                 </div>
 
@@ -3894,8 +3927,13 @@ export default function PendingShipmentsWork() {
                   <button
                     type="button"
                     onClick={fireCombinePrint}
-                    disabled={combinePrinting}
+                    disabled={combinePrinting || !allCombinePicked}
                     className="px-3 py-2 rounded bg-purple-700 text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
+                    title={
+                      !allCombinePicked
+                        ? `Pick inventory for every unit (${combineInventoryIds.length}/${combineTotalUnits} picked)`
+                        : undefined
+                    }
                   >
                     {combinePrinting ? "Printing…" : `Print combined label (${combineSourceRows.length} orders)`}
                   </button>
