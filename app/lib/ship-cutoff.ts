@@ -59,6 +59,30 @@ export function shipNow(now?: DateTime): DateTime {
   return (now ?? DateTime.now()).setZone(SHIP_ZONE);
 }
 
+/** Sat/Sun in shop time. Carriers pick up Mon–Fri; the shop doesn't ship on weekends. */
+function isWeekend(dt: DateTime): boolean {
+  return dt.weekday >= 6;
+}
+
+/** Next Mon–Fri after `dt`. Used to roll Friday-post-cutoff and weekend orders to Monday. */
+function nextBusinessDay(dt: DateTime): DateTime {
+  let d = dt.plus({ days: 1 }).startOf("day");
+  while (isWeekend(d)) d = d.plus({ days: 1 });
+  return d;
+}
+
+/** Business days elapsed strictly after `start` up to and including `end`. Sat/Sun skipped. */
+function businessDaysBetween(start: DateTime, end: DateTime): number {
+  let count = 0;
+  let cur = start.plus({ days: 1 }).startOf("day");
+  const endDay = end.startOf("day");
+  while (cur <= endDay) {
+    if (!isWeekend(cur)) count += 1;
+    cur = cur.plus({ days: 1 });
+  }
+  return count;
+}
+
 export type ShipUrgency =
   /** Arrived on an earlier day and still hasn't gone out. */
   | "late"
@@ -96,24 +120,27 @@ export function shipStatus(orderDate?: string | null, now?: DateTime): ShipStatu
   const official = nowLocal.set({ ...CUTOFF_OFFICIAL, second: 0, millisecond: 0 });
   const discretionEnd = nowLocal.set({ ...CUTOFF_DISCRETION_END, second: 0, millisecond: 0 });
 
-  // Late once we're past the 2:45 cutoff on the order's assigned ship day.
-  // Orders placed after 2:00 PM are queued for the NEXT day's window, so the
-  // morning after a 3 PM order is not late — it's just entering its own day.
-  // On the flip side, a 10 AM order on the current day is late once it's 4 PM
-  // and it still hasn't gone out: the window has closed.
+  // Which business day was this order assigned to when it landed?
+  //   • Pre-2 PM on a weekday  → that day.
+  //   • After 2 PM, or arrived over a weekend → the next Mon–Fri.
+  // Friday-post-cutoff and any Sat/Sun order all roll to Monday for the same
+  // reason: nobody's picking it up until then.
   const placedOfficialCutoff = placed.set({ ...CUTOFF_OFFICIAL, second: 0, millisecond: 0 });
-  const assignedShipDay = placed >= placedOfficialCutoff
-    ? placed.plus({ days: 1 }).startOf("day")
+  const assignedShipDay = isWeekend(placed) || placed >= placedOfficialCutoff
+    ? nextBusinessDay(placed)
     : placed.startOf("day");
-  const assignedDiscretionEnd = assignedShipDay.set({ ...CUTOFF_DISCRETION_END, second: 0, millisecond: 0 });
 
-  if (nowLocal > assignedDiscretionEnd) {
-    const days = Math.floor(nowLocal.startOf("day").diff(assignedShipDay, "days").days);
-    const dayLabel = days === 0 ? "LATE" : days === 1 ? "LATE · 1 day" : `LATE · ${days} days`;
+  // LATE only when a full business day has passed without shipping. Sat/Sun
+  // themselves never fire LATE — a Friday-assigned order that's still here
+  // Saturday morning has Monday to be caught. This is the "over the 1-day
+  // window" rule ops cares about; missing today's 2:45 cutoff alone is not
+  // late, the order simply rolls to tomorrow's window (rendered below).
+  if (!isWeekend(nowLocal) && nowLocal.startOf("day") > assignedShipDay) {
+    const days = businessDaysBetween(assignedShipDay, nowLocal);
     return {
       urgency: "late",
-      label: dayLabel,
-      detail: `Placed ${placed.toFormat("ccc h:mm a")} — past the 2:45 PM cutoff on ${assignedShipDay.toFormat("ccc")}`,
+      label: days === 1 ? "LATE · 1 day" : `LATE · ${days} days`,
+      detail: `Placed ${placed.toFormat("ccc h:mm a")} — missed its ${assignedShipDay.toFormat("ccc")} ship window`,
     };
   }
 
@@ -124,6 +151,17 @@ export function shipStatus(orderDate?: string | null, now?: DateTime): ShipStatu
       urgency: "today",
       label: "SHIP TODAY",
       detail: `Placed ${placed.toFormat("h:mm a")}`,
+    };
+  }
+
+  // Weekend, or past today's 2:45, means we've blown today's window. The order
+  // rolls to the next business day's window — not late, just no longer today.
+  if (isWeekend(nowLocal) || nowLocal >= discretionEnd) {
+    const nextShip = nextBusinessDay(nowLocal);
+    return {
+      urgency: "tomorrow",
+      label: "TOMORROW",
+      detail: `Placed ${placed.toFormat("ccc h:mm a")} — will ship ${nextShip.toFormat("ccc")}`,
     };
   }
 
