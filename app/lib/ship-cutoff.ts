@@ -96,21 +96,24 @@ export function shipStatus(orderDate?: string | null, now?: DateTime): ShipStatu
   const official = nowLocal.set({ ...CUTOFF_OFFICIAL, second: 0, millisecond: 0 });
   const discretionEnd = nowLocal.set({ ...CUTOFF_DISCRETION_END, second: 0, millisecond: 0 });
 
-  // Late only if the order missed the ship day it was actually assigned to.
-  // Orders placed after 2:00 PM roll to the next day's window, so the morning
-  // after a 3 PM order is NOT late — it's just entering its own ship day. Only
-  // once we're past the ship day it was queued for does LATE kick in.
+  // Late once we're past the 2:45 cutoff on the order's assigned ship day.
+  // Orders placed after 2:00 PM are queued for the NEXT day's window, so the
+  // morning after a 3 PM order is not late — it's just entering its own day.
+  // On the flip side, a 10 AM order on the current day is late once it's 4 PM
+  // and it still hasn't gone out: the window has closed.
   const placedOfficialCutoff = placed.set({ ...CUTOFF_OFFICIAL, second: 0, millisecond: 0 });
   const assignedShipDay = placed >= placedOfficialCutoff
     ? placed.plus({ days: 1 }).startOf("day")
     : placed.startOf("day");
+  const assignedDiscretionEnd = assignedShipDay.set({ ...CUTOFF_DISCRETION_END, second: 0, millisecond: 0 });
 
-  if (nowLocal.startOf("day") > assignedShipDay) {
+  if (nowLocal > assignedDiscretionEnd) {
     const days = Math.floor(nowLocal.startOf("day").diff(assignedShipDay, "days").days);
+    const dayLabel = days === 0 ? "LATE" : days === 1 ? "LATE · 1 day" : `LATE · ${days} days`;
     return {
       urgency: "late",
-      label: days === 1 ? "LATE · 1 day" : `LATE · ${days} days`,
-      detail: `Placed ${placed.toFormat("ccc h:mm a")} — missed its ${assignedShipDay.toFormat("ccc")} ship window`,
+      label: dayLabel,
+      detail: `Placed ${placed.toFormat("ccc h:mm a")} — past the 2:45 PM cutoff on ${assignedShipDay.toFormat("ccc")}`,
     };
   }
 

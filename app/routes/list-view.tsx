@@ -1122,7 +1122,7 @@ export default function ListView() {
                 className="text-center bg-gr-dark-hover rounded-md py-2 px-1"
                 title="Official cutoff 2:00 PM ET. 2:00-2:45 is discretionary. After 2:45 nothing else ships today."
               >
-                <div className={`font-black text-lg leading-none ${cutoff.closed ? "text-red-300" : ""}`}>{cutoff.label}</div>
+                <div className={`font-black leading-none tracking-tight ${cutoff.closed ? "text-red-300 text-sm" : "text-lg"}`}>{cutoff.label}</div>
                 <div className="text-[9px] text-gr-beige-light mt-1 leading-tight">til 2:45 PM</div>
               </div>
             );

@@ -766,8 +766,8 @@ export default function PendingShipments() {
               previous three-line layout. */}
           <div className="text-center bg-gr-dark-hover rounded-md py-2 px-1" title="Orders received before 2:45 PM ET must ship today">
             <div
-              className={`font-black text-lg leading-none ${
-                cutoff.closed ? "text-red-300" : cutoff.urgent ? "text-red-300 animate-pulse" : "text-white"
+              className={`font-black leading-none tracking-tight ${
+                cutoff.closed ? "text-red-300 text-sm" : cutoff.urgent ? "text-red-300 animate-pulse text-lg" : "text-white text-lg"
               }`}
             >
               {cutoff.label}
