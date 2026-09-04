@@ -42,7 +42,7 @@ export function ShipBadge({
       >
         {status.label}
       </span>
-      {showAge && status.urgency !== "unknown" && (
+      {showAge && status.urgency === "late" && (
         <span className="text-[10px] text-gray-500 font-semibold leading-none">
           {ageString(orderDate)}
         </span>
