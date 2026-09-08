@@ -577,6 +577,11 @@ export default function PendingShipmentsWork() {
   }>>([]);
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
+  // Whitelisted carriers that were shopped but returned no usable rate
+  // (e.g. UPS/FedEx to Puerto Rico, where only USPS serves). Without this
+  // the grid just omits them and ops can't tell "no service here" from a
+  // broken tool. Populated from the /shipping/rates response.
+  const [unavailableCarriers, setUnavailableCarriers] = useState<Array<{ code: string; name: string }>>([]);
   // Compare-all mode: when true, the rate query drops the
   // `carrierCodes: [pickedCarrier]` restriction so ShipStation returns
   // rates from every whitelisted carrier. Rate table renders a Carrier
@@ -975,6 +980,7 @@ export default function PendingShipmentsWork() {
       setInsuranceEnabled(false);
     }
     setRates([]);
+    setUnavailableCarriers([]);
     setRatesError(null);
     setServices([]);
     // Default carrier + service to whatever the order already has —
@@ -1006,6 +1012,7 @@ export default function PendingShipmentsWork() {
     setMatchedRules([]);
     setWeightHistorySamples(0);
     setRates([]);
+    setUnavailableCarriers([]);
     setRatesLoading(false);
     setRatesError(null);
     setCarriers([]);
@@ -1044,6 +1051,7 @@ export default function PendingShipmentsWork() {
     const totalOz = (Number(weightLb) || 0) * 16 + (Number(weightOz) || 0);
     if (totalOz <= 0) {
       setRates([]);
+      setUnavailableCarriers([]);
       return;
     }
     const controller = new AbortController();
@@ -1088,6 +1096,7 @@ export default function PendingShipmentsWork() {
           throw new Error(data.error ?? `HTTP ${resp.status}`);
         }
         setRates(data.rates ?? []);
+        setUnavailableCarriers(data.unavailableCarriers ?? []);
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
         setRatesError((e as Error).message ?? "Rate lookup failed");
@@ -2987,6 +2996,20 @@ export default function PendingShipmentsWork() {
                             })}
                           </tbody>
                         </table>
+                      )}
+                      {/* Carriers that were shopped but returned no usable
+                          rate (e.g. UPS/FedEx to Puerto Rico / APO / other
+                          territories — only USPS serves those). Shown so ops
+                          can tell "this carrier has no service here" from a
+                          broken tool: the grid alone would just omit them. */}
+                      {unavailableCarriers.length > 0 && (
+                        <div className="px-3 py-2 text-xs text-slate-600 bg-slate-50 border-t border-slate-200">
+                          <span className="font-semibold text-slate-700">
+                            {unavailableCarriers.map((c) => c.name).join(" · ")}
+                          </span>{" "}
+                          {unavailableCarriers.length === 1 ? "has" : "have"} no available
+                          services to this destination — only the carrier(s) listed above serve it.
+                        </div>
                       )}
                     </div>
                   </div>
