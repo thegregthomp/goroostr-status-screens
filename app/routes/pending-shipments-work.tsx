@@ -2941,13 +2941,41 @@ export default function PendingShipmentsWork() {
                             </tr>
                           </thead>
                           <tbody>
-                            {(compareAllCarriers
-                              ? [...rates].sort((a, b) => (a.shipmentCost + a.otherCost) - (b.shipmentCost + b.otherCost))
-                              // Backend now returns all whitelisted carriers so the
-                              // recommendation chip has cross-carrier data. Filter to
-                              // the picked carrier for the single-carrier view.
-                              : rates.filter((r) => r.carrierCode === pickedCarrier)
-                            ).map((r) => {
+                            {(() => {
+                              // Compare-all mode used to render every carrier sorted
+                              // by cost — which put USPS at the top of BackMarket /
+                              // Amazon shipments the recommendation would never pick
+                              // (Adam 2026-09-14). Apply the same gates the auto-pick
+                              // chip already runs:
+                              //   1. Direct Signature Required → FedEx-only (the
+                              //      backend downgrades to plain sig on UPS/USPS, so
+                              //      picking one silently loses the signature level).
+                              //   2. USPS gate → drop stamps_com unless the order
+                              //      qualifies (eBay + under $500) or the address
+                              //      only USPS delivers to (PO Box / APO / remote).
+                              // Ops can still switch to per-carrier view and select
+                              // any carrier manually if they need to override.
+                              const uspsForcedByAddress = isPoBox || isMilitary || isRemoteState;
+                              const uspsAllowed = uspsForcedByAddress || uspsGateOK;
+                              const filterForList = (rs: typeof rates) => {
+                                let out = rs;
+                                if (confirmation === "direct_signature") {
+                                  const fedexOnly = out.filter((r) => r.carrierCode === "fedex");
+                                  if (fedexOnly.length > 0) out = fedexOnly;
+                                }
+                                if (!uspsAllowed) {
+                                  out = out.filter((r) => r.carrierCode !== "stamps_com");
+                                }
+                                return out;
+                              };
+                              const list = compareAllCarriers
+                                ? [...filterForList(rates)].sort((a, b) => (a.shipmentCost + a.otherCost) - (b.shipmentCost + b.otherCost))
+                                // Backend now returns all whitelisted carriers so the
+                                // recommendation chip has cross-carrier data. Filter to
+                                // the picked carrier for the single-carrier view.
+                                : rates.filter((r) => r.carrierCode === pickedCarrier);
+                              return list;
+                            })().map((r) => {
                               // In compare mode a row matches only if
                               // BOTH carrier + service match — same
                               // serviceCode can exist across carriers.
@@ -3479,16 +3507,30 @@ export default function PendingShipmentsWork() {
                     // group. The flat index `i` matches allUnitSlots so
                     // picks[i] stays consistent with firePrint's payload
                     // build above.
+                    // IDs picked in ANY OTHER slot — passed to each section
+                    // so its suggestion list hides units another slot already
+                    // grabbed. Prevents the "5 slots all pick #45929" data
+                    // corruption when the SKU has fewer units in stock than
+                    // the order needs (Adam 2026-09-14).
+                    const pickedIdsByIndex: Record<number, number> = {};
+                    for (const k of Object.keys(picks)) {
+                      const idx = Number(k);
+                      if (picks[idx]?.id != null) pickedIdsByIndex[idx] = picks[idx]!.id;
+                    }
                     let flatI = 0;
                     return activeRows.map((r) => {
                       const rowSlots = r.unitSlots.map((slot) => {
                         const i = flatI++;
+                        const excludeIds = Object.entries(pickedIdsByIndex)
+                          .filter(([k]) => Number(k) !== i)
+                          .map(([, v]) => v);
                         return (
                           <ItemPickerSection
                             key={`${r.order.orderId}-${i}`}
                             apiEndpoint={apiEndpoint}
                             item={slot}
                             picked={picks[i]}
+                            excludeIds={excludeIds}
                             onPick={(inv) => setPickForItem(i, inv)}
                             onUnpick={() => unsetPickForItem(i)}
                           />
@@ -3947,12 +3989,14 @@ function ItemPickerSection({
   apiEndpoint,
   item,
   picked,
+  excludeIds = [],
   onPick,
   onUnpick,
 }: {
   apiEndpoint: string | undefined;
   item: OrderItem;
   picked: InventoryMatch | undefined;
+  excludeIds?: number[];
   onPick: (inv: InventoryMatch) => void;
   onUnpick: () => void;
 }) {
@@ -3960,6 +4004,11 @@ function ItemPickerSection({
   const [matches, setMatches] = useState<InventoryMatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Hide units already picked in another slot. Same-SKU multi-unit orders
+  // with fewer units in stock than needed previously showed the same row
+  // in every slot; picking one for slot A no longer offers it in B–N.
+  const excludeSet = useMemo(() => new Set(excludeIds), [excludeIds]);
+  const visibleMatches = matches.filter((m) => !excludeSet.has(m.id));
 
   useEffect(() => {
     // No fetch needed while this SKU already has a selection — the
@@ -4043,14 +4092,16 @@ function ItemPickerSection({
                 {error}
               </div>
             )}
-            {!loading && !error && matches.length === 0 && (
+            {!loading && !error && visibleMatches.length === 0 && (
               <div className="text-center text-gray-500 text-sm py-4">
-                No in-stock units for this SKU.
+                {matches.length === 0
+                  ? "No in-stock units for this SKU."
+                  : `No more in-stock units — the other ${matches.length} shown ${matches.length === 1 ? "was" : "were"} picked for another slot.`}
               </div>
             )}
-            {!loading && matches.length > 0 && (
+            {!loading && visibleMatches.length > 0 && (
               <ul>
-                {matches.map((inv) => (
+                {visibleMatches.map((inv) => (
                   <li key={inv.id}>
                     <button
                       onClick={() => onPick(inv)}
@@ -4068,9 +4119,9 @@ function ItemPickerSection({
               </ul>
             )}
           </div>
-          {matches.length > 0 && (
+          {visibleMatches.length > 0 && (
             <div className="text-xs text-gray-500 px-4 py-1">
-              {matches.length} · oldest first
+              {visibleMatches.length} · oldest first
             </div>
           )}
         </>
