@@ -130,17 +130,24 @@ export function shipStatus(orderDate?: string | null, now?: DateTime): ShipStatu
     ? nextBusinessDay(placed)
     : placed.startOf("day");
 
-  // LATE only when a full business day has passed without shipping. Sat/Sun
-  // themselves never fire LATE — a Friday-assigned order that's still here
-  // Saturday morning has Monday to be caught. This is the "over the 1-day
-  // window" rule ops cares about; missing today's 2:45 cutoff alone is not
-  // late, the order simply rolls to tomorrow's window (rendered below).
-  if (!isWeekend(nowLocal) && nowLocal.startOf("day") > assignedShipDay) {
-    const days = businessDaysBetween(assignedShipDay, nowLocal);
+  // LATE rule (KAN-104, confirmed with ops): an order isn't late until 2:00 PM
+  // on the business day AFTER the day it was sold — a full grace window, not the
+  // stroke of midnight. The old boundary (`now.startOf('day') > assignedShipDay`)
+  // fired at 00:00, so first thing every morning yesterday's orders flashed LATE
+  // before the floor had any chance to ship them. Jonathan's example: an item
+  // sold Monday (before OR after 2 PM) shouldn't read late until Tuesday 2 PM.
+  //
+  // Sale day = the sale's weekday; weekend sales credit to Monday. Sat/Sun never
+  // fire LATE themselves (a Friday order still here Saturday has Monday to be
+  // caught).
+  const saleBusinessDay = isWeekend(placed) ? nextBusinessDay(placed) : placed.startOf("day");
+  const lateThreshold = nextBusinessDay(saleBusinessDay).set({ ...CUTOFF_OFFICIAL, second: 0, millisecond: 0 });
+  if (!isWeekend(nowLocal) && nowLocal >= lateThreshold) {
+    const days = businessDaysBetween(assignedShipDay, nowLocal) || 1;
     return {
       urgency: "late",
       label: days === 1 ? "LATE · 1 day" : `LATE · ${days} days`,
-      detail: `Placed ${placed.toFormat("ccc h:mm a")} — missed its ${assignedShipDay.toFormat("ccc")} ship window`,
+      detail: `Placed ${placed.toFormat("ccc h:mm a")} — past the ${lateThreshold.toFormat("ccc")} 2:00 PM ship deadline`,
     };
   }
 
