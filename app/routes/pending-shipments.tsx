@@ -364,6 +364,7 @@ function ShipmentCard({ c, dim = false }: { c: CardEntry; dim?: boolean }) {
 
 function ShipmentPanel({
   cards,
+  sections,
   emptyEmoji,
   emptyTitle,
   emptyBody,
@@ -371,6 +372,12 @@ function ShipmentPanel({
   gridColsClass = "grid-cols-3",
 }: {
   cards: CardEntry[];
+  /**
+   * KAN-104: when provided, the panel renders marketplace sections (a header
+   * per marketplace + its own grid) instead of one flat grid. `cards` is still
+   * used for measurement fallbacks; the Shipped-Today panel leaves it unset.
+   */
+  sections?: Array<{ label: string; cards: CardEntry[] }>;
   emptyEmoji: string;
   emptyTitle: string;
   emptyBody: string;
@@ -451,7 +458,8 @@ function ShipmentPanel({
     return () => clearInterval(interval);
   }, [api, isLargerThanContainer, isUserScrolling]);
 
-  if (cards.length === 0) {
+  const isEmpty = sections ? sections.every((s) => s.cards.length === 0) : cards.length === 0;
+  if (isEmpty) {
     return (
       <div className="flex-1 flex items-center justify-center min-h-0">
         <div className="border-2 border-gr-black bg-white rounded-2xl p-6 text-center max-w-md">
@@ -470,11 +478,27 @@ function ShipmentPanel({
           ref={dataRef}
           style={{ transform: styles.y.to((y) => `translate3d(0, ${y}px, 0)`) }}
         >
-          <div className={`grid ${gridColsClass} gap-1.5`}>
-            {cards.map((c) => (
-              <ShipmentCard key={c.key} c={c} dim={dim} />
-            ))}
-          </div>
+          {sections ? (
+            sections.filter((s) => s.cards.length > 0).map((sec) => (
+              <div key={sec.label} className="mb-3">
+                <div className="flex items-baseline gap-2 px-1 py-0.5 mb-1 border-b-2 border-gr-black/25">
+                  <span className="text-base font-black text-gr-black uppercase tracking-wide">{sec.label}</span>
+                  <span className="text-sm font-semibold text-gr-black/40">{sec.cards.length}</span>
+                </div>
+                <div className={`grid ${gridColsClass} gap-1.5`}>
+                  {sec.cards.map((c) => (
+                    <ShipmentCard key={c.key} c={c} dim={dim} />
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className={`grid ${gridColsClass} gap-1.5`}>
+              {cards.map((c) => (
+                <ShipmentCard key={c.key} c={c} dim={dim} />
+              ))}
+            </div>
+          )}
         </animated.div>
       </div>
     </div>
@@ -572,6 +596,39 @@ export default function PendingShipments() {
   }, [shippedToday]);
 
   const pendingCards = useMemo(() => flattenToCards(pendingSorted), [pendingSorted]);
+
+  // KAN-104: group pending into marketplace sections; within each, order by
+  // shipping speed (standard → express → overnight), keeping oldest-first
+  // inside each speed tier (JS array sort is stable).
+  const pendingSections = useMemo(() => {
+    const marketOf = (o: PendingShipment): { key: string; label: string; order: number } => {
+      const raw = (o.orderSource ?? o.advancedOptions?.source ?? "").toLowerCase();
+      if (raw.includes("backmarket") || raw.includes("back_market")) return { key: "backmarket", label: "Back Market", order: 0 };
+      if (raw.includes("ebay")) return { key: "ebay", label: "eBay", order: 1 };
+      if (raw.includes("amazon")) return { key: "amazon", label: "Amazon", order: 2 };
+      if (raw.includes("walmart")) return { key: "walmart", label: "Walmart", order: 3 };
+      if (!raw || raw === "manual") return { key: "other", label: "Other", order: 9 };
+      return { key: raw, label: raw.replace(/\b\w/g, (c) => c.toUpperCase()), order: 5 };
+    };
+    const speedRank = (o: PendingShipment): number => {
+      const b = serviceBadge(o);
+      if (b?.label === "OVERNIGHT") return 2;
+      if (b?.label === "EXPRESS") return 1;
+      return 0;
+    };
+    const groups = new Map<string, { label: string; order: number; orders: PendingShipment[] }>();
+    for (const o of pendingSorted) {
+      const m = marketOf(o);
+      if (!groups.has(m.key)) groups.set(m.key, { label: m.label, order: m.order, orders: [] });
+      groups.get(m.key)!.orders.push(o);
+    }
+    return [...groups.values()]
+      .sort((a, b) => a.order - b.order)
+      .map((g) => ({
+        label: g.label,
+        cards: flattenToCards([...g.orders].sort((a, b) => speedRank(a) - speedRank(b))),
+      }));
+  }, [pendingSorted]);
   const shippedCards = useMemo(() => flattenToCards(shippedSorted), [shippedSorted]);
 
   const formatTime = (d: Date) =>
@@ -662,6 +719,7 @@ export default function PendingShipments() {
             </div>
             <ShipmentPanel
               cards={pendingCards}
+              sections={pendingSections}
               emptyEmoji="✅"
               emptyTitle="You're all caught up."
               emptyBody="No orders currently awaiting shipment."

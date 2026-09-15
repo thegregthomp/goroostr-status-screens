@@ -2233,14 +2233,29 @@ export default function PendingShipmentsWork() {
                     row to sanity-check what the rules had done. */}
                 <div className="flex items-center gap-2 mt-1">
                   <MarketplaceBadge order={pickerRow.order} />
-                  {typeof pickerRow.order.orderTotal === "number" && (
-                    <span
-                      className="text-sm font-black text-gr-black"
-                      title="Sale price — what the buyer paid"
-                    >
-                      ${pickerRow.order.orderTotal.toFixed(2)}
-                    </span>
-                  )}
+                  {(() => {
+                    // KAN-104: show the item price BEFORE tax (unitPrice × qty).
+                    const items = pickerRow.order.items ?? [];
+                    const preTax = items.reduce(
+                      (s, it) => s + Number(it.unitPrice ?? 0) * Number(it.quantity ?? 1),
+                      0
+                    );
+                    if (preTax > 0) {
+                      return (
+                        <span className="text-sm font-black text-gr-black" title="Item price before tax">
+                          ${preTax.toFixed(2)}
+                          <span className="ml-1 font-normal text-[10px] text-gray-500 uppercase tracking-wide">
+                            before tax
+                          </span>
+                        </span>
+                      );
+                    }
+                    return typeof pickerRow.order.orderTotal === "number" ? (
+                      <span className="text-sm font-black text-gr-black" title="Sale price — what the buyer paid">
+                        ${pickerRow.order.orderTotal.toFixed(2)}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
               </div>
               <button
