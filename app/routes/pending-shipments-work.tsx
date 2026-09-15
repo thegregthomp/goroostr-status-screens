@@ -123,6 +123,25 @@ function marketplaceGroup(order: PendingShipment): MarketplaceGroup {
   return "other";
 }
 
+/**
+ * KAN-104: exactly two signature choices per carrier — no overlapping
+ * ShipStation values cluttering the dropdown.
+ *   FedEx → None | Direct Signature Required (FedEx-only value)
+ *   UPS/USPS/other → None | Signature Required
+ */
+function signatureOptionsFor(carrier: string | null): Array<[string, string]> {
+  if ((carrier ?? "").toLowerCase() === "fedex") {
+    return [["none", "None"], ["direct_signature", "Direct Signature Required (FedEx)"]];
+  }
+  return [["none", "None"], ["signature", "Signature Required"]];
+}
+
+/** Map a signature intent onto the value the current carrier actually supports. */
+function normalizeConfirmation(confirmation: string, carrier: string | null): string {
+  if (confirmation === "none") return "none";
+  return (carrier ?? "").toLowerCase() === "fedex" ? "direct_signature" : "signature";
+}
+
 function MarketplaceBadge({ order }: { order: PendingShipment }): JSX.Element | null {
   const raw = (order.orderSource ?? order.advancedOptions?.source ?? "").toLowerCase();
   if (!raw) return null;
@@ -648,6 +667,29 @@ export default function PendingShipmentsWork() {
     ""
   ).toString().toLowerCase();
   const uspsGateOK = marketplaceForRec === "ebay" && orderTotalForRec > 0 && orderTotalForRec < 500;
+
+  // KAN-104: BackMarket ships FedEx only — hide UPS/USPS from the carrier
+  // dropdown AND scope the rate shop to FedEx.
+  const isBackMarket = marketplaceForRec.includes("backmarket") || marketplaceForRec.includes("back_market");
+  const shippableCarriers = useMemo(
+    () => (isBackMarket ? carriers.filter((c) => c.code === "fedex") : carriers),
+    [carriers, isBackMarket]
+  );
+  // Force the picked carrier to FedEx on a BackMarket order.
+  useEffect(() => {
+    if (isBackMarket && pickedCarrier && pickedCarrier !== "fedex") {
+      setPickedCarrier("fedex");
+      setPickedService(null);
+    }
+  }, [isBackMarket, pickedCarrier]);
+  // Keep the signature choice valid for the current carrier (KAN-104): each
+  // carrier offers only 2 options, so coerce a now-invalid selection.
+  useEffect(() => {
+    const valid = signatureOptionsFor(pickedCarrier).map(([v]) => v);
+    if (!valid.includes(confirmation)) {
+      setConfirmation(normalizeConfirmation(confirmation, pickedCarrier));
+    }
+  }, [pickedCarrier, confirmation]);
   // Returns { rate, reasons[] } — the reason strings render on the
   // chip so ops sees WHY this pick, not just what. Null when rates
   // are empty or nothing meets the transit budget.
@@ -1047,7 +1089,7 @@ export default function PendingShipmentsWork() {
     // /shipping/carriers request and end up sending an empty
     // carrierCodes array (falls back to every ShipStation account
     // carrier including the ones we filter out).
-    if (carriers.length === 0) return;
+    if (shippableCarriers.length === 0) return;
     const totalOz = (Number(weightLb) || 0) * 16 + (Number(weightOz) || 0);
     if (totalOz <= 0) {
       setRates([]);
@@ -1069,7 +1111,7 @@ export default function PendingShipmentsWork() {
         // promise. The visible rate table filters to `pickedCarrier`
         // when compareAllCarriers is off — same fetch, different view.
         const carrierCodesPayload = {
-          carrierCodes: carriers.map((c) => c.code).filter(Boolean),
+          carrierCodes: shippableCarriers.map((c) => c.code).filter(Boolean),
         };
         const resp = await fetch(`${apiEndpoint}/shipping/rates`, {
           method: "POST",
@@ -1108,7 +1150,7 @@ export default function PendingShipmentsWork() {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, confirmation, carriers]);
+  }, [apiEndpoint, pickerRow, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, confirmation, shippableCarriers]);
 
   // Rules-engine defaults — fetched on picker open (prefetch). Every
   // matching rule's actions get merged into a bundle; we apply each
@@ -2581,11 +2623,10 @@ export default function PendingShipmentsWork() {
                     }}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
                   >
-                    <option value="none">None</option>
-                    <option value="delivery">Delivery Confirmation</option>
-                    <option value="signature">Signature Required</option>
-                    <option value="adult_signature">Adult Signature Required</option>
-                    <option value="direct_signature">Direct Signature Required (FedEx)</option>
+                    {/* KAN-104: two options per carrier, no overlap. */}
+                    {signatureOptionsFor(pickedCarrier).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -2748,12 +2789,12 @@ export default function PendingShipmentsWork() {
                     className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
                   >
                     <option value="">— pick a carrier —</option>
-                    {carriers.map((c) => (
+                    {shippableCarriers.map((c) => (
                       <option key={c.code} value={c.code}>
                         {c.name || c.code.toUpperCase()}
                       </option>
                     ))}
-                    {pickedCarrier && !carriers.some((c) => c.code === pickedCarrier) && (
+                    {pickedCarrier && !shippableCarriers.some((c) => c.code === pickedCarrier) && (
                       <option value={pickedCarrier}>
                         {pickedCarrier.toUpperCase()} {carriersLoading ? "(loading…)" : "(from order)"}
                       </option>
@@ -3203,14 +3244,17 @@ export default function PendingShipmentsWork() {
                   </button>
                   <button
                     onClick={firePrint}
-                    disabled={printing || !pickedCarrier || !pickedService || weightSource === "pending"}
+                    disabled={printing || !pickedCarrier || !pickedService || weightSource === "pending"
+                      || !(Number(dimL) > 0 && Number(dimW) > 0 && Number(dimH) > 0)}
                     className="px-3 py-2 rounded bg-gr-green-dark text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
                     title={
                       weightSource === "pending"
                         ? "Weigh on scale + click Verified (or edit the weight)"
-                        : (!pickedCarrier || !pickedService)
-                          ? "Pick a rate from the table first"
-                          : ""
+                        : !(Number(dimL) > 0 && Number(dimW) > 0 && Number(dimH) > 0)
+                          ? "Enter package dimensions (L × W × H) before printing" // KAN-104
+                          : (!pickedCarrier || !pickedService)
+                            ? "Pick a rate from the table first"
+                            : ""
                     }
                   >
                     {printing ? "Printing…" : "Confirm & Print"}
