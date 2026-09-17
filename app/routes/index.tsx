@@ -26,9 +26,10 @@ export async function loader({ request }: LoaderArgs) {
 }
 
 export default function Index() {
-  const { data, custom, status_options, apiEndpoint } = useLoaderData();
+  const { data, custom, status_options, apiEndpoint, shipments: initialShipments = [] } = useLoaderData();
   const [orders, setOrders] = useState([...data, ...custom]);
   const [customOrders, setCustomOrders] = useState(custom);
+  const [shipments, setShipments] = useState(initialShipments || []);
   const [channel, setChannel] = useState(null);
   const [shouldReset, setShouldReset] = useState(true);
   const [pusher, setPusher] = useState(null);
@@ -206,9 +207,10 @@ export default function Index() {
       const response = await fetch(
         `${apiEndpoint}/get-status-orders?paginate=false`
       );
-      const { data, custom } = await response.json();
+      const { data, custom, shipments: freshShipments = [] } = await response.json();
       setOrders([...data, ...custom]);
       setCustomOrders(custom);
+      setShipments(freshShipments || []);
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Error fetching orders:', error);
@@ -364,6 +366,23 @@ export default function Index() {
       className="relative min-h-screen bg-white flex"
       ref={ref}
     >
+      {/* Trade-In Shipments (KAN-114) — floating panel, absolutely positioned
+          so it never reflows the fixed status grid. Renders only when present. */}
+      {shipments && shipments.length > 0 && (
+        <div className="absolute bottom-3 left-3 z-20 max-w-xs bg-white/95 border-2 border-gr-black rounded-lg p-2 shadow-lg">
+          <div className="flex items-center gap-1 mb-1">
+            <span>🎓</span>
+            <span className="text-xs font-bold text-gr-black">Trade-In Shipments ({shipments.length})</span>
+          </div>
+          <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+            {shipments.map((s) => (
+              <div key={s.id} className="text-xs text-gr-black">
+                <span className="font-bold">{s.reference}</span> · {s.partner || "—"} · <span className="capitalize">{s.status}</span> · {s.device_count}d
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {/* Main Content */}
       <div className="flex items-center justify-center min-h-screen flex-1">
       {orientation === "landscape" ? (
