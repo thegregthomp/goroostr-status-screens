@@ -439,6 +439,14 @@ export default function StatusSection({
                             style={{ marginBottom: "1px" }}
                           ></span>
                         </span>
+                        {isTradeIn && (
+                          <span
+                            className="mr-1 inline-flex items-center justify-center rounded bg-rose-500 px-1.5 text-xs font-bold text-white"
+                            title="Trade-In"
+                          >
+                            T
+                          </span>
+                        )}
                         <span
                           className={`inline-block text-sm font-bold text-black`}
                         >
@@ -660,6 +668,14 @@ export default function StatusSection({
                               ></span>
                             )}
                           </span>
+                          {isTradeIn && (
+                            <span
+                              className="mr-1 inline-flex items-center justify-center rounded bg-rose-500 px-1.5 text-xs font-bold text-white"
+                              title="Trade-In"
+                            >
+                              T
+                            </span>
+                          )}
                           <span
                             className={`${orderIdColor} inline-block text-sm font-bold tracking-wide`}
                           >
