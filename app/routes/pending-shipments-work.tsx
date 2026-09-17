@@ -593,6 +593,11 @@ export default function PendingShipmentsWork() {
     otherCost: number;
     transitDays: number | null;
     transitDaysEstimated?: boolean;
+    // KAN-110 v5: One Rate boxes come back as verify-price placeholders
+    // — no live number matches ShipStation's UI, so ops confirms cost
+    // in ShipStation before printing. `shipmentCost` is a sentinel 0
+    // on these rows and must not be used in cost math.
+    verifyPrice?: boolean;
   }>>([]);
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
@@ -696,6 +701,9 @@ export default function PendingShipmentsWork() {
   const recommendation = useMemo(() => {
     if (rates.length === 0) return null;
     let eligible = rates.filter((r) => {
+      // KAN-110 v5: verify-price rows carry a sentinel $0 cost — never
+      // let them win as "cheapest" in the recommendation math.
+      if (r.verifyPrice) return false;
       if (r.transitDays == null) return false;
       return r.transitDays <= maxTransitDays;
     });
@@ -3024,8 +3032,14 @@ export default function PendingShipmentsWork() {
                                 }
                                 return out;
                               };
+                              // KAN-110 v5: verify-price rows carry sentinel $0
+                              // — push them to the bottom of compare mode so
+                              // real quotes lead. Same tie-break rule per
+                              // pair otherwise.
+                              const sortKey = (r: typeof rates[number]) =>
+                                r.verifyPrice ? Number.POSITIVE_INFINITY : r.shipmentCost + r.otherCost;
                               const list = compareAllCarriers
-                                ? [...filterForList(rates)].sort((a, b) => (a.shipmentCost + a.otherCost) - (b.shipmentCost + b.otherCost))
+                                ? [...filterForList(rates)].sort((a, b) => sortKey(a) - sortKey(b))
                                 // Backend now returns all whitelisted carriers so the
                                 // recommendation chip has cross-carrier data. Filter to
                                 // the picked carrier for the single-carrier view.
@@ -3073,7 +3087,16 @@ export default function PendingShipmentsWork() {
                                       : "—"}
                                   </td>
                                   <td className="px-2 py-1 text-right font-bold text-gr-black whitespace-nowrap">
-                                    ${total.toFixed(2)}
+                                    {r.verifyPrice ? (
+                                      <span
+                                        className="inline-block px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-900 border border-yellow-300 text-[10px] uppercase tracking-wider"
+                                        title="ShipStation's public API doesn't return the exact One Rate quote its UI shows. Confirm cost in ShipStation before printing."
+                                      >
+                                        Verify price
+                                      </span>
+                                    ) : (
+                                      `$${total.toFixed(2)}`
+                                    )}
                                   </td>
                                 </tr>
                               );
@@ -3199,6 +3222,33 @@ export default function PendingShipmentsWork() {
                   const shipping = picked.shipmentCost;
                   const other = picked.otherCost;
                   const total = shipping + other;
+                  // KAN-110 v5: One Rate picks show a verify-in-ShipStation
+                  // callout instead of a bogus $0 total. The label still
+                  // prints and bills FedEx correctly — this is a display
+                  // gate only, because ShipStation's public API doesn't
+                  // return the exact quote its UI shows.
+                  if (picked.verifyPrice) {
+                    return (
+                      <div className="border-2 border-yellow-400 bg-yellow-50 rounded px-3 py-2 text-sm">
+                        <div className="flex items-baseline justify-between text-xs text-yellow-900 uppercase tracking-wider mb-1">
+                          <span>Verify price before printing</span>
+                          <span className="text-[10px] font-normal normal-case tracking-normal">
+                            {(pickedCarrier ?? "").toUpperCase()} · {picked.serviceName || pickedService}
+                            {picked.transitDays !== null && (
+                              <span className="ml-2 text-yellow-700">
+                                ~{picked.transitDays}d transit
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="text-xs text-yellow-900">
+                          ShipStation's public API doesn't return the live One Rate quote
+                          its UI shows. Confirm the cost in ShipStation before printing.
+                          The label will still print and bill GoRoostr FedEx correctly.
+                        </div>
+                      </div>
+                    );
+                  }
                   return (
                     <div className="border border-slate-300 bg-slate-50 rounded px-3 py-2 text-sm">
                       <div className="flex items-baseline justify-between text-xs text-gray-500 uppercase tracking-wider mb-1">
