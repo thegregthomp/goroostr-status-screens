@@ -26,9 +26,10 @@ export async function loader({ request }: LoaderArgs) {
 
 
 export default function ListView() {
-  const { data, custom, status_options, apiEndpoint } = useLoaderData();
+  const { data, custom, status_options, apiEndpoint, shipments: initialShipments = [] } = useLoaderData();
   const [orders, setOrders] = useState([...data, ...custom]);
   const [customOrders, setCustomOrders] = useState(custom);
+  const [shipments, setShipments] = useState(initialShipments || []);
   const [channel, setChannel] = useState(null);
   const [shouldReset, setShouldReset] = useState(true);
   const [pusher, setPusher] = useState(null);
@@ -200,9 +201,10 @@ export default function ListView() {
     setIsRefreshing(true);
     try {
       const response = await fetch(`${apiEndpoint}/get-status-orders`);
-      const { data, custom } = await response.json();
+      const { data, custom, shipments: freshShipments = [] } = await response.json();
       setOrders([...data, ...custom]);
       setCustomOrders(custom);
+      setShipments(freshShipments || []);
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Error fetching orders:', error);
@@ -507,7 +509,28 @@ export default function ListView() {
       <div className="p-4 pr-24">
         <div className="w-full">
           <h1 className="text-2xl font-bold text-gr-black mb-4">Order Status List</h1>
-          
+
+          {/* Trade-In Shipments (KAN-114) — inbound/processing partner boxes.
+              Isolated section; renders only when the API sends shipments. */}
+          {shipments && shipments.length > 0 && (
+            <div className="bg-white rounded-lg p-3 mb-4 border-2 border-gr-black">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-lg">🎓</span>
+                <h2 className="text-sm font-bold text-gr-black">Trade-In Shipments ({shipments.length})</h2>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {shipments.map((s) => (
+                  <div key={s.id} className="border border-rose-300 bg-rose-50 rounded-lg px-3 py-2 text-sm">
+                    <div className="font-bold text-gr-black">{s.reference} · {s.partner || '—'}</div>
+                    <div className="text-xs text-gr-black/70 capitalize">
+                      {s.status} · {s.device_count} device{s.device_count === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Status Filter Dropdown */}
           <div className="bg-white rounded-lg p-3 mb-4 border-2 border-gr-black">
             <div className="flex items-center justify-end">
