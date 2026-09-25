@@ -4,6 +4,7 @@ import { useLoaderData, Link } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import stylesheetUrl from "../styles/global.css";
 import { getPendingShipments } from "~/models/orders.server";
+import { requireScreenDevice } from "~/lib/screen-device.server";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
 import { ShipBadge } from "~/components/ShipBadge";
@@ -46,11 +47,9 @@ export function meta() {
 }
 
 export async function loader({ request }: LoaderArgs) {
-  const data = await getPendingShipments();
-  return json({
-    ...data,
-    apiEndpoint: process.env.GOROOSTR_ENDPOINT,
-  });
+  // KAN-171: buyer names/addresses only go to registered TVs.
+  await requireScreenDevice(request);
+  return json(await getPendingShipments());
 }
 
 /** ShipStation v1 order shape (subset — full shape has ~30 more fields). */
@@ -516,7 +515,6 @@ export default function PendingShipments() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(initial.error ?? null);
-  const apiEndpoint = initial.apiEndpoint;
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
@@ -564,7 +562,8 @@ export default function PendingShipments() {
   useInterval(async () => {
     setIsRefreshing(true);
     try {
-      const resp = await fetch(`${apiEndpoint}/pending-shipments`);
+      // Same-origin proxy (device cookie) — the TV never calls the API directly.
+      const resp = await fetch("/screens/pending-shipments");
       const data = await resp.json();
       setShipments(data.shipments ?? []);
       setShippedToday(data.shipped_today ?? []);

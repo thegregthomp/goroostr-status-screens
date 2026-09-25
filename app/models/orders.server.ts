@@ -19,7 +19,15 @@ export async function getOrders() {
 export async function getPendingShipments() {
   // GOROOSTR_ENDPOINT already resolves to the API base (see getOrders which
   // uses /get-status-orders bare — no /api prefix). Don't double it here.
-  const response = await fetch(`${goroostrApiRoute}/pending-shipments`);
+  //
+  // KAN-171: the keyed server-to-server route. The public /pending-shipments
+  // fallback only exists until STATUS_SCREENS_API_KEY is set; the API locks it.
+  const screenKey = process.env.STATUS_SCREENS_API_KEY;
+  const response = screenKey
+    ? await fetch(`${goroostrApiRoute}/screens/pending-shipments`, {
+        headers: { "X-Screen-Key": screenKey, Accept: "application/json" },
+      })
+    : await fetch(`${goroostrApiRoute}/pending-shipments`);
   if (!response.ok) {
     // Don't blow up the page — surface an empty list + the error so the
     // wall view still renders "0 shipments" instead of a Remix 500.

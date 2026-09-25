@@ -3,7 +3,6 @@ import type { LoaderArgs } from "@remix-run/node";
 import { useLoaderData, Link, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import stylesheetUrl from "../styles/global.css";
-import { getPendingShipments } from "~/models/orders.server";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
 import { ShipBadge } from "~/components/ShipBadge";
@@ -18,8 +17,9 @@ import { authClient, authFetch, AuthRequiredError, type AuthUser } from "~/lib/a
  * dense table, one row per SKU line, search + filter, per-row Print
  * button.
  *
- * Same data source as the wall (getPendingShipments loader), same
- * 60-second polling cadence, same cookie auth gate. Marketplace and
+ * Same data as the wall, same 60-second polling cadence — but loaded in
+ * the browser through the staff login (/spa/pending-shipments, KAN-171),
+ * never by the loader, so nothing reaches a visitor who isn't signed in. Marketplace and
  * service badges duplicated here for now — extract to a shared module
  * once the layout settles.
  */
@@ -36,17 +36,12 @@ export function meta() {
 }
 
 export async function loader({ request }: LoaderArgs) {
-  const data = await getPendingShipments();
   const api = process.env.GOROOSTR_ENDPOINT ?? "";
   // /spa/... base for auth'd endpoints (login, print-*). Derived from
   // the same env var by stripping the trailing /api so we don't need
   // to add a second Netlify env var.
   const spaEndpoint = api.replace(/\/api\/?$/, "") + "/spa";
-  return json({
-    ...data,
-    apiEndpoint: api,
-    spaEndpoint,
-  });
+  return json({ spaEndpoint });
 }
 
 // -----------------------------------------------------------------------
@@ -292,8 +287,8 @@ function toRows(shipments: PendingShipment[]): WorkRow[] {
 
 export default function PendingShipmentsWork() {
   const initial = useLoaderData<typeof loader>();
-  const [shipments, setShipments] = useState<PendingShipment[]>(initial.shipments ?? []);
-  const [shippedToday, setShippedToday] = useState<PendingShipment[]>(initial.shipped_today ?? []);
+  const [shipments, setShipments] = useState<PendingShipment[]>([]);
+  const [shippedToday, setShippedToday] = useState<PendingShipment[]>([]);
   // Tab state: Pending (default) vs Shipped Today. Shipped rows are
   // read-only — no Print button, just a listing of what's already
   // shipped with tracking numbers.
@@ -308,9 +303,8 @@ export default function PendingShipmentsWork() {
     const t = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
-  const [loadError, setLoadError] = useState<string | null>(initial.error ?? null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const apiEndpoint = initial.apiEndpoint;
   const spaEndpoint = initial.spaEndpoint;
 
   // Auth: Sanctum token in localStorage. All postage-billing print
@@ -378,21 +372,28 @@ export default function PendingShipmentsWork() {
     }
   };
 
-  useInterval(async () => {
+  const refresh = async () => {
     setIsRefreshing(true);
     try {
-      const resp = await fetch(`${apiEndpoint}/pending-shipments`);
+      const resp = await authFetch(`${spaEndpoint}/pending-shipments`);
       const data = await resp.json();
       setShipments(data.shipments ?? []);
       setShippedToday(data.shipped_today ?? []);
-      setLoadError(data.success === false ? data.error ?? "Failed to load" : null);
+      setLoadError(data.success === false || !resp.ok ? data.error ?? data.message ?? "Failed to load" : null);
       setLastUpdated(new Date());
     } catch (e) {
+      if (handleAuthFailure(e)) return;
       setLoadError((e as Error).message ?? "Failed to load");
     } finally {
       setTimeout(() => setIsRefreshing(false), 500);
     }
-  }, 60000);
+  };
+  // First load as soon as the staff login is confirmed, then every 60s.
+  useEffect(() => {
+    if (authUser) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser]);
+  useInterval(() => { if (authUser) refresh(); }, 60000);
 
   // Jon asked for a sort-by-age control "similar to ShipStation". The board
   // was already age-sorted, just hardcoded oldest-first with no way to see or
@@ -1113,7 +1114,7 @@ export default function PendingShipmentsWork() {
         const carrierCodesPayload = {
           carrierCodes: shippableCarriers.map((c) => c.code).filter(Boolean),
         };
-        const resp = await fetch(`${apiEndpoint}/shipping/rates`, {
+        const resp = await authFetch(`${spaEndpoint}/shipping/rates`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1150,7 +1151,7 @@ export default function PendingShipmentsWork() {
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, pickerRow, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, confirmation, shippableCarriers]);
+  }, [spaEndpoint, pickerRow, weightLb, weightOz, packageCode, residential, dimL, dimW, dimH, insuranceAmount, insuranceProvider, confirmation, shippableCarriers]);
 
   // Rules-engine defaults — fetched on picker open (prefetch). Every
   // matching rule's actions get merged into a bundle; we apply each
@@ -1162,8 +1163,8 @@ export default function PendingShipmentsWork() {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch(
-          `${apiEndpoint}/shipping/recommended-defaults/${pickerRow.order.orderId}`
+        const resp = await authFetch(
+          `${spaEndpoint}/shipping/recommended-defaults/${pickerRow.order.orderId}`
         );
         const data = await resp.json();
         if (cancelled) return;
@@ -1187,7 +1188,7 @@ export default function PendingShipmentsWork() {
       }
     })();
     return () => { cancelled = true; };
-  }, [apiEndpoint, pickerRow]);
+  }, [spaEndpoint, pickerRow]);
 
   // Weight-from-history — when confirm mode opens, look up each
   // picked SKU's median weight in sku_weight_averages and pre-fill
@@ -1208,8 +1209,8 @@ export default function PendingShipmentsWork() {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch(
-          `${apiEndpoint}/shipping/sku-weights?skus=${encodeURIComponent(skus)}`
+        const resp = await authFetch(
+          `${spaEndpoint}/shipping/sku-weights?skus=${encodeURIComponent(skus)}`
         );
         const data = await resp.json();
         if (cancelled) return;
@@ -1236,7 +1237,7 @@ export default function PendingShipmentsWork() {
     return () => { cancelled = true; };
     // Re-runs when picks change (items[] changes shape only if the
     // shipper re-picks, which happens back in Stage 1 not confirm).
-  }, [apiEndpoint, pickerRow]);
+  }, [spaEndpoint, pickerRow]);
 
   // Fetch the account's configured carriers on picker open (prefetch
   // — the rate effect gates on carriers.length, so firing this early
@@ -1247,7 +1248,7 @@ export default function PendingShipmentsWork() {
     setCarriersLoading(true);
     (async () => {
       try {
-        const resp = await fetch(`${apiEndpoint}/shipping/carriers`);
+        const resp = await authFetch(`${spaEndpoint}/shipping/carriers`);
         const data = await resp.json();
         if (cancelled) return;
         if (data.success !== false) {
@@ -1260,7 +1261,7 @@ export default function PendingShipmentsWork() {
       }
     })();
     return () => { cancelled = true; };
-  }, [apiEndpoint, pickerRow]);
+  }, [spaEndpoint, pickerRow]);
 
   // Fetch services for the currently-picked carrier so the service
   // dropdown offers real per-account options (not hardcoded).
@@ -1270,7 +1271,7 @@ export default function PendingShipmentsWork() {
     setServicesLoading(true);
     (async () => {
       try {
-        const resp = await fetch(`${apiEndpoint}/shipping/carriers/${encodeURIComponent(pickedCarrier)}/services`);
+        const resp = await authFetch(`${spaEndpoint}/shipping/carriers/${encodeURIComponent(pickedCarrier)}/services`);
         const data = await resp.json();
         if (cancelled) return;
         if (data.success !== false) {
@@ -1283,7 +1284,7 @@ export default function PendingShipmentsWork() {
       }
     })();
     return () => { cancelled = true; };
-  }, [apiEndpoint, confirmMode, pickedCarrier]);
+  }, [spaEndpoint, confirmMode, pickedCarrier]);
 
   // Fetch packages for the currently-picked carrier so the package
   // dropdown offers the right options (Fedex has "fedex_one_rate_*",
@@ -1295,7 +1296,7 @@ export default function PendingShipmentsWork() {
     setPackagesLoading(true);
     (async () => {
       try {
-        const resp = await fetch(`${apiEndpoint}/shipping/carriers/${encodeURIComponent(pickedCarrier)}/packages`);
+        const resp = await authFetch(`${spaEndpoint}/shipping/carriers/${encodeURIComponent(pickedCarrier)}/packages`);
         const data = await resp.json();
         if (cancelled) return;
         if (data.success !== false) {
@@ -1308,7 +1309,7 @@ export default function PendingShipmentsWork() {
       }
     })();
     return () => { cancelled = true; };
-  }, [apiEndpoint, confirmMode, pickedCarrier]);
+  }, [spaEndpoint, confirmMode, pickedCarrier]);
 
   const setPickForItem = (itemIndex: number, inv: InventoryMatch) =>
     setPicks((prev) => ({ ...prev, [itemIndex]: inv }));
@@ -1677,13 +1678,13 @@ export default function PendingShipmentsWork() {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch(`${apiEndpoint}/shipping/carriers`);
+        const resp = await authFetch(`${spaEndpoint}/shipping/carriers`);
         const data = await resp.json();
         if (!cancelled && data.success !== false) setManualCarriers(data.carriers ?? []);
       } catch { /* non-fatal */ }
     })();
     return () => { cancelled = true; };
-  }, [apiEndpoint, manualShipOpen]);
+  }, [spaEndpoint, manualShipOpen]);
 
   // Load services + packages when the shipper picks a carrier in the
   // manual-ship modal.
@@ -1693,8 +1694,8 @@ export default function PendingShipmentsWork() {
     (async () => {
       try {
         const [svcResp, pkgResp] = await Promise.all([
-          fetch(`${apiEndpoint}/shipping/carriers/${manualShip.carrierCode}/services`),
-          fetch(`${apiEndpoint}/shipping/carriers/${manualShip.carrierCode}/packages`),
+          authFetch(`${spaEndpoint}/shipping/carriers/${manualShip.carrierCode}/services`),
+          authFetch(`${spaEndpoint}/shipping/carriers/${manualShip.carrierCode}/packages`),
         ]);
         const svc = await svcResp.json();
         const pkg = await pkgResp.json();
@@ -1704,7 +1705,7 @@ export default function PendingShipmentsWork() {
       } catch { /* non-fatal */ }
     })();
     return () => { cancelled = true; };
-  }, [apiEndpoint, manualShipOpen, manualShip.carrierCode]);
+  }, [spaEndpoint, manualShipOpen, manualShip.carrierCode]);
 
   const closeManualShip = () => {
     if (manualResult?.labelDataUrl) URL.revokeObjectURL(manualResult.labelDataUrl);
@@ -3586,7 +3587,7 @@ export default function PendingShipmentsWork() {
                         return (
                           <ItemPickerSection
                             key={`${r.order.orderId}-${i}`}
-                            apiEndpoint={apiEndpoint}
+                            spaEndpoint={spaEndpoint}
                             item={slot}
                             picked={picks[i]}
                             excludeIds={excludeIds}
@@ -4045,14 +4046,14 @@ export default function PendingShipmentsWork() {
 // the picked InventoryMatch via onPick / onUnpick callbacks.
 
 function ItemPickerSection({
-  apiEndpoint,
+  spaEndpoint,
   item,
   picked,
   excludeIds = [],
   onPick,
   onUnpick,
 }: {
-  apiEndpoint: string | undefined;
+  spaEndpoint: string;
   item: OrderItem;
   picked: InventoryMatch | undefined;
   excludeIds?: number[];
@@ -4084,8 +4085,8 @@ function ItemPickerSection({
       setLoading(true);
       setError(null);
       try {
-        const url = `${apiEndpoint}/inventory/search?sku=${encodeURIComponent(sku)}&q=${encodeURIComponent(query)}`;
-        const resp = await fetch(url, { signal: controller.signal });
+        const url = `${spaEndpoint}/inventory/search?sku=${encodeURIComponent(sku)}&q=${encodeURIComponent(query)}`;
+        const resp = await authFetch(url, { signal: controller.signal });
         const data = await resp.json();
         if (data.success === false) throw new Error(data.error ?? "Search failed");
         setMatches(data.results ?? []);
@@ -4100,7 +4101,7 @@ function ItemPickerSection({
       controller.abort();
       clearTimeout(t);
     };
-  }, [apiEndpoint, item.sku, query, picked]);
+  }, [spaEndpoint, item.sku, query, picked]);
 
   const qty = item.quantity ?? 1;
 
