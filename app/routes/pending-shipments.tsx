@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { LoaderArgs } from "@remix-run/node";
-import { useLoaderData, Link } from "@remix-run/react";
+import { useLoaderData, Link, useNavigate } from "@remix-run/react";
 import { json } from "@remix-run/node";
 import stylesheetUrl from "../styles/global.css";
 import { getPendingShipments } from "~/models/orders.server";
-import { requireScreenDevice } from "~/lib/screen-device.server";
+import { isScreenDevice } from "~/lib/screen-device.server";
+import { authClient, authFetch, AuthRequiredError } from "~/lib/auth.client";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
 import { ShipBadge } from "~/components/ShipBadge";
@@ -47,9 +48,15 @@ export function meta() {
 }
 
 export async function loader({ request }: LoaderArgs) {
-  // KAN-171: buyer names/addresses only go to registered TVs.
-  await requireScreenDevice(request);
-  return json(await getPendingShipments());
+  const api = process.env.GOROOSTR_ENDPOINT ?? "";
+  const spaEndpoint = api.replace(/\/api\/?$/, "") + "/spa";
+  // KAN-171: buyer names/addresses are server-rendered only for registered
+  // TVs. Anyone else (staff on their own computers) signs in and the browser
+  // loads the list through the staff login instead.
+  if (await isScreenDevice(request)) {
+    return json({ mode: "screen" as const, spaEndpoint, ...(await getPendingShipments()) });
+  }
+  return json({ mode: "staff" as const, spaEndpoint, success: true, shipments: [], shipped_today: [], error: null });
 }
 
 /** ShipStation v1 order shape (subset — full shape has ~30 more fields). */
@@ -520,7 +527,24 @@ export default function PendingShipments() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
 
+  // Not a registered TV → staff login (the login page sends them back here).
+  const staffMode = initial.mode === "staff";
+  const navigate = useNavigate();
+  const toLogin = () => navigate("/login?next=/pending-shipments", { replace: true });
+  const [staffReady, setStaffReady] = useState(false);
   useEffect(() => {
+    if (!staffMode) return;
+    if (!authClient.getToken()) {
+      toLogin();
+      return;
+    }
+    setIsAuthenticated(true);
+    setStaffReady(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffMode]);
+
+  useEffect(() => {
+    if (staffMode) return;
     const cookie = document.cookie
       .split("; ")
       .find((row) => row.startsWith("status_auth="));
@@ -559,22 +583,31 @@ export default function PendingShipments() {
     return () => clearInterval(t);
   }, []);
 
-  useInterval(async () => {
+  const refresh = async () => {
     setIsRefreshing(true);
     try {
-      // Same-origin proxy (device cookie) — the TV never calls the API directly.
-      const resp = await fetch("/screens/pending-shipments");
+      // TVs: same-origin proxy (device cookie). Staff: /spa with their login.
+      // Either way the browser never calls the public API.
+      const resp = staffMode
+        ? await authFetch(`${initial.spaEndpoint}/pending-shipments`)
+        : await fetch("/screens/pending-shipments");
       const data = await resp.json();
       setShipments(data.shipments ?? []);
       setShippedToday(data.shipped_today ?? []);
-      setLoadError(data.success === false ? data.error ?? "Failed to load" : null);
+      setLoadError(data.success === false || !resp.ok ? data.error ?? data.message ?? "Failed to load" : null);
       setLastUpdated(new Date());
     } catch (e) {
+      if (e instanceof AuthRequiredError) return toLogin();
       setLoadError((e as Error).message ?? "Failed to load");
     } finally {
       setTimeout(() => setIsRefreshing(false), 500);
     }
-  }, 60000);
+  };
+  useEffect(() => {
+    if (staffReady) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffReady]);
+  useInterval(() => { if (!staffMode || staffReady) refresh(); }, 60000);
 
   // Pending: oldest-sold first (highest priority top).
   const pendingSorted = useMemo(() => {
