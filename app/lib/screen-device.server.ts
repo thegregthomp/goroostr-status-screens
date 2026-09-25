@@ -14,6 +14,9 @@ import { timingSafeEqual } from "crypto";
  *
  * While STATUS_SCREENS_DEVICE_KEYS is unset the gate is open (warning logged),
  * so this can deploy before the keys are configured.
+ *
+ * People on their own computers don't register: without the TV cookie the wall
+ * falls back to the staff login (same as /pending-shipments-work).
  */
 const deviceCookie = createCookie("gr_screen_device", {
   httpOnly: true,
@@ -41,12 +44,15 @@ function isAllowed(key: string, allowed: string[]): boolean {
 const NOT_REGISTERED =
   "This screen isn't registered. Open its registration link once (ask Greg for it).";
 
-/** Throws a 403 (or a redirect that stores the device cookie) unless the request is from a registered screen. */
-export async function requireScreenDevice(request: Request): Promise<void> {
+/**
+ * True for a registered screen. A `?device=` registration link throws the
+ * redirect that stores the cookie (or a 403 for an unknown key).
+ */
+export async function isScreenDevice(request: Request): Promise<boolean> {
   const allowed = allowedKeys();
   if (allowed.length === 0) {
     console.warn("STATUS_SCREENS_DEVICE_KEYS is unset — the TV wall is not device-gated");
-    return;
+    return true;
   }
 
   const url = new URL(request.url);
@@ -63,7 +69,10 @@ export async function requireScreenDevice(request: Request): Promise<void> {
   }
 
   const fromCookie = await deviceCookie.parse(request.headers.get("Cookie"));
-  if (typeof fromCookie === "string" && isAllowed(fromCookie, allowed)) return;
+  return typeof fromCookie === "string" && isAllowed(fromCookie, allowed);
+}
 
-  throw new Response(NOT_REGISTERED, { status: 403 });
+/** Throws a 403 unless the request is from a registered screen. */
+export async function requireScreenDevice(request: Request): Promise<void> {
+  if (!(await isScreenDevice(request))) throw new Response(NOT_REGISTERED, { status: 403 });
 }
