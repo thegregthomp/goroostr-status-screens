@@ -54,8 +54,10 @@ export async function requireScreenDevice(request: Request): Promise<void> {
   if (fromUrl !== null) {
     if (!isAllowed(fromUrl, allowed)) throw new Response(NOT_REGISTERED, { status: 403 });
     url.searchParams.delete("device");
-    const qs = url.searchParams.toString();
-    throw redirect(url.pathname + (qs ? `?${qs}` : ""), {
+    // Never redirect to a bare path: Netlify re-appends the original query
+    // string (?device=…) to a query-less Location, which loops forever.
+    url.searchParams.set("registered", "1");
+    throw redirect(`${url.pathname}?${url.searchParams.toString()}`, {
       headers: { "Set-Cookie": await deviceCookie.serialize(fromUrl) },
     });
   }
