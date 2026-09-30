@@ -591,10 +591,17 @@ export default function PendingShipments() {
       const resp = staffMode
         ? await authFetch(`${initial.spaEndpoint}/pending-shipments`)
         : await fetch("/screens/pending-shipments");
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.success === false) {
+        // Keep the last good list on screen. Blanking to "0 shipments" reads
+        // as "nothing to ship" instead of "the feed is down" — that is how
+        // the 2026-09 orphan outage stayed invisible for a day (KAN-242).
+        setLoadError(data.error ?? data.message ?? `Failed to load (${resp.status})`);
+        return;
+      }
       setShipments(data.shipments ?? []);
       setShippedToday(data.shipped_today ?? []);
-      setLoadError(data.success === false || !resp.ok ? data.error ?? data.message ?? "Failed to load" : null);
+      setLoadError(null);
       setLastUpdated(new Date());
     } catch (e) {
       if (e instanceof AuthRequiredError) return toLogin();

@@ -376,10 +376,17 @@ export default function PendingShipmentsWork() {
     setIsRefreshing(true);
     try {
       const resp = await authFetch(`${spaEndpoint}/pending-shipments`);
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.success === false) {
+        // Keep the last good list on screen. Blanking to "0 shipments" reads
+        // as "nothing to ship" instead of "the feed is down" — that is how
+        // the 2026-09 orphan outage stayed invisible for a day (KAN-242).
+        setLoadError(data.error ?? data.message ?? `Failed to load (${resp.status})`);
+        return;
+      }
       setShipments(data.shipments ?? []);
       setShippedToday(data.shipped_today ?? []);
-      setLoadError(data.success === false || !resp.ok ? data.error ?? data.message ?? "Failed to load" : null);
+      setLoadError(null);
       setLastUpdated(new Date());
     } catch (e) {
       if (handleAuthFailure(e)) return;
@@ -4087,9 +4094,15 @@ function ItemPickerSection({
       try {
         const url = `${spaEndpoint}/inventory/search?sku=${encodeURIComponent(sku)}&q=${encodeURIComponent(query)}`;
         const resp = await authFetch(url, { signal: controller.signal });
+        // A broken endpoint must never read as "no units in stock". KAN-171
+        // shadowed this route behind /inventory/{id}; the JSON 404 carried no
+        // `success: false`, so `data.results ?? []` rendered an empty list and
+        // shippers believed the stock was gone (KAN-242).
+        if (!resp.ok) throw new Error(`Search failed (${resp.status})`);
         const data = await resp.json();
         if (data.success === false) throw new Error(data.error ?? "Search failed");
-        setMatches(data.results ?? []);
+        if (!Array.isArray(data.results)) throw new Error("Search failed \u2014 unexpected response");
+        setMatches(data.results);
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
         setError((e as Error).message ?? "Search failed");
