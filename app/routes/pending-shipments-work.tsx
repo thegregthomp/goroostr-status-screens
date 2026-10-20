@@ -3563,7 +3563,7 @@ export default function PendingShipmentsWork() {
                 ) : allUnitSlots.length > 1 && (
                   <div className="px-4 py-2 border-b border-slate-200 bg-purple-50 text-xs text-purple-900">
                     <strong>{allUnitSlots.length}-unit order.</strong> Pick one inventory item
-                    for each unit below. All go on the same label.
+                    for each unit below. You can split them into several shipments on the next step.
                   </div>
                 )}
                 <div className="max-h-[60vh] overflow-y-auto">
