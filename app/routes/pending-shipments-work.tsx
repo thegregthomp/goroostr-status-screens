@@ -608,7 +608,7 @@ export default function PendingShipmentsWork() {
   // (e.g. UPS/FedEx to Puerto Rico, where only USPS serves). Without this
   // the grid just omits them and ops can't tell "no service here" from a
   // broken tool. Populated from the /shipping/rates response.
-  const [unavailableCarriers, setUnavailableCarriers] = useState<Array<{ code: string; name: string }>>([]);
+  const [unavailableCarriers, setUnavailableCarriers] = useState<Array<{ code: string; name: string; reason?: string; message?: string }>>([]);
   // Compare-all mode: when true, the rate query drops the
   // `carrierCodes: [pickedCarrier]` restriction so ShipStation returns
   // rates from every whitelisted carrier. Rate table renders a Carrier
@@ -3094,15 +3094,32 @@ export default function PendingShipmentsWork() {
                           territories — only USPS serves those). Shown so ops
                           can tell "this carrier has no service here" from a
                           broken tool: the grid alone would just omit them. */}
-                      {unavailableCarriers.length > 0 && (
-                        <div className="px-3 py-2 text-xs text-slate-600 bg-slate-50 border-t border-slate-200">
-                          <span className="font-semibold text-slate-700">
-                            {unavailableCarriers.map((c) => c.name).join(" · ")}
-                          </span>{" "}
-                          {unavailableCarriers.length === 1 ? "has" : "have"} no available
-                          services to this destination — only the carrier(s) listed above serve it.
-                        </div>
-                      )}
+                      {/* KAN-552: a carrier that ERRORED (account/insurance
+                          problem, not connected) says why — USPS once vanished
+                          because ShipStation rejected carrier insurance, and
+                          the line below blamed the destination. Older API
+                          responses carry no reason and keep the old line. */}
+                      {unavailableCarriers
+                        .filter((c) => c.reason === "error" || c.reason === "not_connected")
+                        .map((c) => (
+                          <div key={c.code} className="px-3 py-2 text-xs text-amber-800 bg-amber-50 border-t border-amber-200">
+                            <span className="font-semibold">{c.name}:</span>{" "}
+                            {c.reason === "not_connected" ? "not connected in ShipStation" : "ShipStation returned an error"}
+                            {c.message && c.reason === "error" ? ` — ${c.message}` : ""}
+                          </div>
+                        ))}
+                      {(() => {
+                        const noService = unavailableCarriers.filter((c) => c.reason !== "error" && c.reason !== "not_connected");
+                        return noService.length > 0 ? (
+                          <div className="px-3 py-2 text-xs text-slate-600 bg-slate-50 border-t border-slate-200">
+                            <span className="font-semibold text-slate-700">
+                              {noService.map((c) => c.name).join(" · ")}
+                            </span>{" "}
+                            {noService.length === 1 ? "has" : "have"} no available
+                            services to this destination — only the carrier(s) listed above serve it.
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                   </div>
                 )}
