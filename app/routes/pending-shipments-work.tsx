@@ -9,6 +9,7 @@ import { ShipBadge } from "~/components/ShipBadge";
 import { orderDateMillis, shipCutoffCountdown } from "~/lib/ship-cutoff";
 import { authClient, authFetch, AuthRequiredError, type AuthUser } from "~/lib/auth.client";
 import { postLabelPurchase } from "~/lib/label-purchase.client";
+import { ShipmentHistory } from "~/components/ShipmentHistory";
 
 /**
  * Shipping work view — /pending-shipments-work.
@@ -293,7 +294,8 @@ export default function PendingShipmentsWork() {
   // Tab state: Pending (default) vs Shipped Today. Shipped rows are
   // read-only — no Print button, just a listing of what's already
   // shipped with tracking numbers.
-  const [tab, setTab] = useState<"pending" | "shipped">("pending");
+  // KAN-679: "history" = shipments across dates + per-shipment timeline.
+  const [tab, setTab] = useState<"pending" | "shipped" | "history">("pending");
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -326,6 +328,9 @@ export default function PendingShipmentsWork() {
     authClient.clear();
     navigate("/login", { replace: true });
   };
+  const historyAuthRequired = React.useCallback(() => {
+    navigate("/login?next=/pending-shipments-work", { replace: true });
+  }, [navigate]);
   const handleAuthFailure = (e: unknown) => {
     if (e instanceof AuthRequiredError) {
       navigate("/login?next=/pending-shipments-work", { replace: true });
@@ -1900,9 +1905,21 @@ export default function PendingShipmentsWork() {
             Shipped Today
             <span className="ml-2 text-xs font-semibold text-gray-500">{shippedSorted.length}</span>
           </button>
+          <button
+            onClick={() => setTab("history")}
+            className={`px-4 py-2 text-sm font-bold border-b-2 -mb-px transition-colors ${
+              tab === "history"
+                ? "border-gr-green-dark text-gr-black"
+                : "border-transparent text-gray-500 hover:text-gr-black"
+            }`}
+            title="Earlier dates, search and each shipment's action log (KAN-679)"
+          >
+            History
+          </button>
         </div>
 
-        {/* Search + errors */}
+        {/* Search + errors (Pending / Shipped Today; History has its own) */}
+        {tab !== "history" && (
         <div className="flex items-center gap-3 mb-3">
           <input
             type="search"
@@ -1924,7 +1941,14 @@ export default function PendingShipmentsWork() {
             </select>
           </label>
         </div>
-        {loadError && (
+        )}
+        {tab === "history" && (
+          <ShipmentHistory
+            spaEndpoint={spaEndpoint}
+            onAuthRequired={historyAuthRequired}
+          />
+        )}
+        {loadError && tab !== "history" && (
           <div className="border-2 border-red-400 bg-red-50 text-red-800 rounded px-3 py-2 text-sm mb-3">
             Couldn't refresh: {loadError}
           </div>
