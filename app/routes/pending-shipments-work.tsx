@@ -874,6 +874,9 @@ export default function PendingShipmentsWork() {
       delta: number;
       multiplier_seen: number;
     } | null;
+    // KAN-642: label printed, but a follow-up is needed (order not marked
+    // shipped → marketplace has no tracking; units not attached).
+    warnings?: string[];
   } | null>(null);
   // Ref to the label-preview iframe on the success card. Its onLoad
   // handler auto-fires contentWindow.print() inside the modal's own
@@ -909,6 +912,8 @@ export default function PendingShipmentsWork() {
     labelDataUrl?: string | null;
     error?: string;
   }>>([]);
+  // KAN-642: split follow-ups the backend reports alongside a printed batch.
+  const [splitWarnings, setSplitWarnings] = useState<string[]>([]);
 
   const blankSplitShipment = (): SplitShipment => ({
     itemIndices: [],
@@ -1480,6 +1485,7 @@ export default function PendingShipmentsWork() {
         serviceCode: data.serviceCode ?? null,
         labelDataUrl,
         anomaly: data.anomaly ?? null,
+        warnings: printWarnings(data),
       });
       // Drop the pending row(s) from the list optimistically (60s poll
       // would catch up anyway, but this feels responsive). Combine
@@ -1598,6 +1604,7 @@ export default function PendingShipmentsWork() {
         };
       });
       setSplitResults(perShipment);
+      setSplitWarnings(printWarnings(data));
 
       // Optimistic list update — if every shipment succeeded, drop
       // the row from pending. If any failed, leave it (ops needs to
@@ -1618,6 +1625,7 @@ export default function PendingShipmentsWork() {
       if (r.labelDataUrl) URL.revokeObjectURL(r.labelDataUrl);
     }
     setSplitResults([]);
+    setSplitWarnings([]);
     exitSplitMode();
     closePicker();
   };
@@ -2292,6 +2300,7 @@ export default function PendingShipmentsWork() {
                     recommendation would have cost. Slack already got a
                     ping; this in-modal banner lets ops catch it before
                     they walk away. */}
+                <PrintWarnings warnings={printResult.warnings ?? []} />
                 {printResult.anomaly && (
                   <div className="border border-red-400 bg-red-50 rounded px-3 py-3 mb-3">
                     <div className="text-red-900 font-bold text-sm mb-1">
@@ -3508,6 +3517,7 @@ export default function PendingShipmentsWork() {
                       </div>
                     )}
 
+                    <PrintWarnings warnings={splitWarnings} />
                     {splitResults.length > 0 && (
                       <div className="space-y-2">
                         <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">Results</div>
@@ -4216,6 +4226,36 @@ function ItemPickerSection({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// KAN-642: the print endpoints return `warnings` when the label printed but
+// staff still have to act (ShipStation didn't mark the order shipped, so the
+// marketplace has no tracking; or units weren't attached). Older API builds
+// only sent combine `markResults`, so fall back to that.
+function printWarnings(data: any): string[] {
+  if (Array.isArray(data?.warnings)) {
+    return data.warnings.filter((w: unknown): w is string => typeof w === "string" && w !== "");
+  }
+  const failed = Object.entries((data?.markResults ?? {}) as Record<string, boolean>)
+    .filter(([, ok]) => ok === false)
+    .map(([id]) => id);
+  return failed.length
+    ? [`Label printed, but ShipStation did not mark order(s) ${failed.join(", ")} shipped, so the marketplace has no tracking yet. Mark them shipped in ShipStation.`]
+    : [];
+}
+
+function PrintWarnings({ warnings }: { warnings: string[] }) {
+  if (warnings.length === 0) return null;
+  return (
+    <div className="border border-amber-400 bg-amber-50 rounded px-3 py-3 mb-3">
+      <div className="text-amber-900 font-bold text-sm mb-1">⚠️ Label printed, follow-up needed</div>
+      <ul className="text-amber-900 text-xs list-disc pl-4 space-y-1">
+        {warnings.map((w, i) => (
+          <li key={i}>{w}</li>
+        ))}
+      </ul>
     </div>
   );
 }
