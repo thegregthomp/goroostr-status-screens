@@ -8,6 +8,7 @@ import { DateTime } from "luxon";
 import { ShipBadge } from "~/components/ShipBadge";
 import { orderDateMillis, shipCutoffCountdown } from "~/lib/ship-cutoff";
 import { authClient, authFetch, AuthRequiredError, type AuthUser } from "~/lib/auth.client";
+import { postLabelPurchase } from "~/lib/label-purchase.client";
 
 /**
  * Shipping work view — /pending-shipments-work.
@@ -1417,10 +1418,8 @@ export default function PendingShipmentsWork() {
         ? { orderIds: combineSourceRows.map((r) => r.order.orderId) }
         : { orderId: pickerRow.order.orderId };
 
-      const resp = await authFetch(printEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // KAN-640: one attempt key per click; a refused second label can be confirmed with a reason.
+      const { resp, data } = await postLabelPurchase(printEndpoint, {
           ...orderIdField,
           inventoryIds,
           weightOz: w,
@@ -1451,9 +1450,7 @@ export default function PendingShipmentsWork() {
               : weightSource === "fresh"
                 ? { weightSource: "weighed_fresh" }
                 : {}),
-        }),
       });
-      const data = await resp.json();
       if (!resp.ok || data.success === false) {
         throw new Error(data.error ?? `HTTP ${resp.status}`);
       }
@@ -1570,15 +1567,10 @@ export default function PendingShipmentsWork() {
 
     setPrinting(true);
     try {
-      const resp = await authFetch(`${spaEndpoint}/shipping/print-split`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId: pickerRow.order.orderId,
-          shipments: payloadShipments,
-        }),
+      const { resp, data } = await postLabelPurchase(`${spaEndpoint}/shipping/print-split`, {
+        orderId: pickerRow.order.orderId,
+        shipments: payloadShipments,
       });
-      const data = await resp.json();
       if (!resp.ok && !Array.isArray(data.shipments)) {
         throw new Error(data.error ?? `HTTP ${resp.status}`);
       }
@@ -1751,10 +1743,7 @@ export default function PendingShipmentsWork() {
         .split(",")
         .map((s) => Number(s.trim()))
         .filter((n) => Number.isFinite(n) && n > 0);
-      const resp = await authFetch(`${spaEndpoint}/shipping/print-manual`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const { resp, data } = await postLabelPurchase(`${spaEndpoint}/shipping/print-manual`, {
           shipTo: {
             name: m.name,
             ...(m.company ? { company: m.company } : {}),
@@ -1775,9 +1764,7 @@ export default function PendingShipmentsWork() {
           ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider: m.insuranceProvider } : {}),
           ...(invIds.length > 0 ? { inventoryIds: invIds } : {}),
           ...(m.notes ? { notes: m.notes } : {}),
-        }),
       });
-      const data = await resp.json();
       if (!resp.ok || data.success === false) {
         throw new Error(data.error ?? `HTTP ${resp.status}`);
       }
