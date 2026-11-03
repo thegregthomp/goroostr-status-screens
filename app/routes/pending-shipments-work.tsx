@@ -8,7 +8,12 @@ import { DateTime } from "luxon";
 import { ShipBadge } from "~/components/ShipBadge";
 import { orderDateMillis, shipCutoffCountdown } from "~/lib/ship-cutoff";
 import { authClient, authFetch, AuthRequiredError, type AuthUser } from "~/lib/auth.client";
-import { postLabelPurchase } from "~/lib/label-purchase.client";
+import {
+  EXTRA_BOX_REASON_MIN,
+  postLabelPurchase,
+  type LabelOverride,
+  type LabelRefusal,
+} from "~/lib/label-purchase.client";
 import { ShipmentHistory } from "~/components/ShipmentHistory";
 
 /**
@@ -868,6 +873,28 @@ export default function PendingShipmentsWork() {
   }, [recommendedRate, pickedCarrier, pickedService, rateManuallyOverridden]);
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+  // KAN-640: a print the API refused with a 409 (order already has a label /
+  // is shipped / in progress / outcome unknown), shown inline next to the
+  // flow's Print button. `flow` says which Print button resends it.
+  const [labelRefusalState, setLabelRefusalState] = useState<{
+    flow: "single" | "split" | "manual";
+    refusal: LabelRefusal;
+  } | null>(null);
+  const [extraBoxReason, setExtraBoxReason] = useState("");
+  const [noLabelInShipStation, setNoLabelInShipStation] = useState(false);
+  const clearLabelRefusal = () => {
+    setLabelRefusalState(null);
+    setExtraBoxReason("");
+    setNoLabelInShipStation(false);
+  };
+  // Returns true when the API refused the purchase; the caller stops there.
+  const takeLabelRefusal = (flow: "single" | "split" | "manual", refusal: LabelRefusal | null): boolean => {
+    if (!refusal) return false;
+    setExtraBoxReason("");
+    setNoLabelInShipStation(false);
+    setLabelRefusalState({ flow, refusal });
+    return true;
+  };
   const [printResult, setPrintResult] = useState<{
     trackingNumber: string | null;
     shipmentCost: number | null;
@@ -917,7 +944,15 @@ export default function PendingShipmentsWork() {
     carrierCode?: string | null;
     labelDataUrl?: string | null;
     error?: string;
+    // KAN-642: "sent" = ShipStation gave the marketplace this box's tracking;
+    // "manual" = staff add it on the marketplace order by hand.
+    marketplaceTracking?: "sent" | "manual" | null;
   }>>([]);
+  // KAN-642: tracking numbers the marketplace did not get automatically.
+  const [splitManualTracking, setSplitManualTracking] = useState<{
+    orderNumber: string | null;
+    trackingNumbers: string[];
+  } | null>(null);
   // KAN-642: split follow-ups the backend reports alongside a printed batch.
   const [splitWarnings, setSplitWarnings] = useState<string[]>([]);
 
@@ -953,6 +988,8 @@ export default function PendingShipmentsWork() {
     setSplitMode(false);
     setSplitShipments([]);
     setSplitResults([]);
+    setSplitManualTracking(null);
+    clearLabelRefusal();
   };
 
   // Move an item to a specific shipment (removes from all others). If
@@ -1052,6 +1089,7 @@ export default function PendingShipmentsWork() {
   };
 
   const closePicker = () => {
+    clearLabelRefusal();
     setPickerRow(null);
     setCombineSourceRows([]);
     setPicks({});
@@ -1355,6 +1393,7 @@ export default function PendingShipmentsWork() {
   const backToPick = () => {
     setConfirmMode(false);
     setPrintError(null);
+    clearLabelRefusal();
   };
 
   // Combine the lb + oz fields into total ounces for the API. Falls
@@ -1365,8 +1404,9 @@ export default function PendingShipmentsWork() {
     return lb * 16 + oz;
   };
 
-  const firePrint = async () => {
+  const firePrint = async (override?: LabelOverride) => {
     if (!pickerRow) return;
+    clearLabelRefusal();
     // Payload = one inventory ID per physical unit (unitSlots), not
     // per orderItem — matches how the backend counts expected units
     // and how throughput/sales link inventory → IPS (KAN-64). In
@@ -1423,8 +1463,9 @@ export default function PendingShipmentsWork() {
         ? { orderIds: combineSourceRows.map((r) => r.order.orderId) }
         : { orderId: pickerRow.order.orderId };
 
-      // KAN-640: one attempt key per click; a refused second label can be confirmed with a reason.
-      const { resp, data } = await postLabelPurchase(printEndpoint, {
+      // KAN-640: one attempt key per request; a refused second label can be
+      // bought on purpose from the inline "Extra box — reason" panel.
+      const { resp, data, refusal } = await postLabelPurchase(printEndpoint, {
           ...orderIdField,
           inventoryIds,
           weightOz: w,
@@ -1455,7 +1496,8 @@ export default function PendingShipmentsWork() {
               : weightSource === "fresh"
                 ? { weightSource: "weighed_fresh" }
                 : {}),
-      });
+      }, override);
+      if (takeLabelRefusal("single", refusal)) return;
       if (!resp.ok || data.success === false) {
         throw new Error(data.error ?? `HTTP ${resp.status}`);
       }
@@ -1516,9 +1558,10 @@ export default function PendingShipmentsWork() {
   // once to /shipping/print-split. The backend prints sequentially
   // and returns a per-shipment result array; we render it into the
   // splitResults state (with one label preview per success).
-  const fireSplitPrint = async () => {
+  const fireSplitPrint = async (override?: LabelOverride) => {
     if (!pickerRow) return;
     setPrintError(null);
+    clearLabelRefusal();
 
     // Client-side validation — every UNIT must be allocated to
     // exactly one shipment; every shipment needs its own carrier +
@@ -1572,10 +1615,11 @@ export default function PendingShipmentsWork() {
 
     setPrinting(true);
     try {
-      const { resp, data } = await postLabelPurchase(`${spaEndpoint}/shipping/print-split`, {
+      const { resp, data, refusal } = await postLabelPurchase(`${spaEndpoint}/shipping/print-split`, {
         orderId: pickerRow.order.orderId,
         shipments: payloadShipments,
-      });
+      }, override);
+      if (takeLabelRefusal("split", refusal)) return;
       if (!resp.ok && !Array.isArray(data.shipments)) {
         throw new Error(data.error ?? `HTTP ${resp.status}`);
       }
@@ -1598,10 +1642,18 @@ export default function PendingShipmentsWork() {
           carrierCode: r.carrierCode ?? null,
           labelDataUrl,
           error: r.error,
+          marketplaceTracking: r.marketplaceTracking ?? null,
         };
       });
       setSplitResults(perShipment);
       setSplitWarnings(printWarnings(data));
+      // KAN-642: older API builds don't send marketplaceTracking; then nothing shows.
+      const manual = Array.isArray(data.marketplaceTracking?.manual)
+        ? (data.marketplaceTracking.manual as unknown[]).filter((t): t is string => typeof t === "string" && t !== "")
+        : [];
+      setSplitManualTracking(manual.length
+        ? { orderNumber: data.marketplaceTracking?.orderNumber ?? pickerRow.order.orderNumber ?? null, trackingNumbers: manual }
+        : null);
 
       // Optimistic list update — if every shipment succeeded, drop
       // the row from pending. If any failed, leave it (ops needs to
@@ -1623,6 +1675,7 @@ export default function PendingShipmentsWork() {
     }
     setSplitResults([]);
     setSplitWarnings([]);
+    setSplitManualTracking(null);
     exitSplitMode();
     closePicker();
   };
@@ -1724,10 +1777,12 @@ export default function PendingShipmentsWork() {
     setManualShipOpen(false);
     setManualResult(null);
     setManualError(null);
+    clearLabelRefusal();
   };
 
-  const fireManualPrint = async () => {
+  const fireManualPrint = async (override?: LabelOverride) => {
     setManualError(null);
+    clearLabelRefusal();
     const m = manualShip;
     const wOz = (Number(m.weightLb) || 0) * 16 + (Number(m.weightOz) || 0);
     if (!m.name || !m.street1 || !m.city || !m.state || !m.postalCode) {
@@ -1748,7 +1803,7 @@ export default function PendingShipmentsWork() {
         .split(",")
         .map((s) => Number(s.trim()))
         .filter((n) => Number.isFinite(n) && n > 0);
-      const { resp, data } = await postLabelPurchase(`${spaEndpoint}/shipping/print-manual`, {
+      const { resp, data, refusal } = await postLabelPurchase(`${spaEndpoint}/shipping/print-manual`, {
           shipTo: {
             name: m.name,
             ...(m.company ? { company: m.company } : {}),
@@ -1769,7 +1824,8 @@ export default function PendingShipmentsWork() {
           ...(insurance > 0 ? { insuranceAmount: insurance, insuranceProvider: m.insuranceProvider } : {}),
           ...(invIds.length > 0 ? { inventoryIds: invIds } : {}),
           ...(m.notes ? { notes: m.notes } : {}),
-      });
+      }, override);
+      if (takeLabelRefusal("manual", refusal)) return;
       if (!resp.ok || data.success === false) {
         throw new Error(data.error ?? `HTTP ${resp.status}`);
       }
@@ -1793,6 +1849,34 @@ export default function PendingShipmentsWork() {
       setManualPrinting(false);
     }
   };
+
+  // KAN-640: resend the refused print as an intended extra label. A new
+  // request, so postLabelPurchase gives it a fresh idempotency key.
+  const confirmExtraLabel = () => {
+    if (!labelRefusalState) return;
+    const reason = extraBoxReason.trim();
+    if (reason.length < EXTRA_BOX_REASON_MIN) return;
+    if (labelRefusalState.refusal.kind === "blocked") return;
+    if (labelRefusalState.refusal.kind === "outcome_unknown" && !noLabelInShipStation) return;
+    const override: LabelOverride = { additionalLabel: true, additionalLabelReason: reason };
+    const { flow } = labelRefusalState;
+    if (flow === "single") void firePrint(override);
+    else if (flow === "split") void fireSplitPrint(override);
+    else void fireManualPrint(override);
+  };
+  const refusalPanel = (flow: "single" | "split" | "manual", busy: boolean) =>
+    labelRefusalState?.flow === flow ? (
+      <LabelRefusalPanel
+        refusal={labelRefusalState.refusal}
+        reason={extraBoxReason}
+        onReasonChange={setExtraBoxReason}
+        noLabelConfirmed={noLabelInShipStation}
+        onNoLabelConfirmedChange={setNoLabelInShipStation}
+        busy={busy}
+        onConfirm={confirmExtraLabel}
+        onDismiss={clearLabelRefusal}
+      />
+    ) : null;
 
   if (!isAuthenticated) {
     return (
@@ -3294,6 +3378,7 @@ export default function PendingShipmentsWork() {
                     {printError}
                   </div>
                 )}
+                {refusalPanel("single", printing)}
                 <div className="flex items-center justify-end gap-2">
                   <button
                     onClick={backToPick}
@@ -3303,7 +3388,7 @@ export default function PendingShipmentsWork() {
                     Back
                   </button>
                   <button
-                    onClick={firePrint}
+                    onClick={() => firePrint()}
                     disabled={printing || !pickedCarrier || !pickedService || weightSource === "pending"
                       || !(Number(dimL) > 0 && Number(dimW) > 0 && Number(dimH) > 0)}
                     className="px-3 py-2 rounded bg-gr-green-dark text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
@@ -3527,8 +3612,10 @@ export default function PendingShipmentsWork() {
                         {printError}
                       </div>
                     )}
+                    {refusalPanel("split", printing)}
 
                     <PrintWarnings warnings={splitWarnings} />
+                    {splitManualTracking && <ManualTrackingList {...splitManualTracking} />}
                     {splitResults.length > 0 && (
                       <div className="space-y-2">
                         <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">Results</div>
@@ -3547,6 +3634,12 @@ export default function PendingShipmentsWork() {
                             </div>
                             {r.success && r.trackingNumber && (
                               <div className="font-mono">{r.carrierCode} · {r.trackingNumber}</div>
+                            )}
+                            {r.success && r.marketplaceTracking === "sent" && (
+                              <div>Tracking sent to the marketplace by ShipStation.</div>
+                            )}
+                            {r.success && r.marketplaceTracking === "manual" && (
+                              <div className="text-amber-800 font-semibold">Add this tracking on the marketplace order by hand.</div>
                             )}
                             {!r.success && r.error && <div>{r.error}</div>}
                             {r.labelDataUrl && (
@@ -3573,7 +3666,7 @@ export default function PendingShipmentsWork() {
                         {splitResults.length > 0 ? "Done" : "Cancel"}
                       </button>
                       <button
-                        onClick={fireSplitPrint}
+                        onClick={() => fireSplitPrint()}
                         disabled={printing || splitResults.length > 0}
                         className="px-3 py-2 rounded bg-purple-700 text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
                       >
@@ -4056,6 +4149,7 @@ export default function PendingShipmentsWork() {
                     {manualError}
                   </div>
                 )}
+                {refusalPanel("manual", manualPrinting)}
 
                 <div className="flex items-center justify-end gap-2 pt-2">
                   <button
@@ -4068,7 +4162,7 @@ export default function PendingShipmentsWork() {
                   </button>
                   <button
                     type="button"
-                    onClick={fireManualPrint}
+                    onClick={() => fireManualPrint()}
                     disabled={manualPrinting}
                     className="px-3 py-2 rounded bg-purple-700 text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
                   >
@@ -4267,6 +4361,148 @@ function PrintWarnings({ warnings }: { warnings: string[] }) {
           <li key={i}>{w}</li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// KAN-640: the API refused a label with a 409. An order that already has a
+// label (or is shipped) can get an intended extra box label with a reason; an
+// attempt whose outcome is unknown is never retried blindly; an in-progress
+// purchase only waits.
+function LabelRefusalPanel({
+  refusal,
+  reason,
+  onReasonChange,
+  noLabelConfirmed,
+  onNoLabelConfirmedChange,
+  busy,
+  onConfirm,
+  onDismiss,
+}: {
+  refusal: LabelRefusal;
+  reason: string;
+  onReasonChange: (v: string) => void;
+  noLabelConfirmed: boolean;
+  onNoLabelConfirmedChange: (v: boolean) => void;
+  busy: boolean;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}) {
+  const reasonOk = reason.trim().length >= EXTRA_BOX_REASON_MIN;
+
+  if (refusal.kind === "blocked") {
+    return (
+      <div className="border border-red-400 bg-red-50 rounded px-3 py-3 text-red-900">
+        <div className="font-bold text-sm mb-1">No label bought</div>
+        <div className="text-xs mb-2">{refusal.message}</div>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="px-3 py-1.5 rounded border border-gray-300 bg-white text-gr-black text-xs hover:bg-slate-50"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const extraBox = refusal.kind === "extra_box";
+  const canBuy = reasonOk && (extraBox || noLabelConfirmed) && !busy;
+  return (
+    <div className={
+      "rounded px-3 py-3 border " +
+      (extraBox ? "border-amber-400 bg-amber-50 text-amber-900" : "border-red-400 bg-red-50 text-red-900")
+    }>
+      <div className="font-bold text-sm mb-1">No label bought</div>
+      <div className="text-xs mb-2">{refusal.message}</div>
+      {extraBox ? (
+        <div className="text-xs mb-2">
+          Reprinting? Reuse the existing label (ShipStation &gt; Shipments &gt; Reprint). Only buy another for an
+          extra box: it charges postage again.
+        </div>
+      ) : (
+        <label className="flex items-start gap-2 text-xs mb-2">
+          <input
+            type="checkbox"
+            checked={noLabelConfirmed}
+            onChange={(e) => onNoLabelConfirmedChange(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>I checked ShipStation &gt; Shipments: there is no label for this order. Buying one now charges postage.</span>
+        </label>
+      )}
+      {(extraBox || noLabelConfirmed) && (
+        <label className="block text-xs mb-2">
+          <span className="font-semibold">{extraBox ? "Extra box — reason" : "Reason"} (required)</span>
+          <input
+            type="text"
+            value={reason}
+            maxLength={255}
+            onChange={(e) => onReasonChange(e.target.value)}
+            placeholder={extraBox ? "e.g. second box: charger and case" : "e.g. checked ShipStation, no label from the timeout"}
+            className="mt-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm text-gr-black bg-white"
+          />
+        </label>
+      )}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={busy}
+          className="px-3 py-1.5 rounded border border-gray-300 bg-white text-gr-black text-xs hover:bg-slate-50 disabled:opacity-40"
+        >
+          Cancel
+        </button>
+        {(extraBox || noLabelConfirmed) && (
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!canBuy}
+            title={reasonOk ? "" : "Type a reason first"}
+            className="px-3 py-1.5 rounded bg-gr-green-dark text-white text-xs font-bold hover:opacity-90 disabled:opacity-40"
+          >
+            {busy ? "Printing…" : extraBox ? "Buy extra box label" : "Buy label"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// KAN-642: ShipStation sends the marketplace one tracking number per order
+// (box 1). Boxes 2+ are listed here so staff can copy them onto the
+// marketplace order.
+function ManualTrackingList({ orderNumber, trackingNumbers }: { orderNumber: string | null; trackingNumbers: string[] }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(trackingNumbers.join("\n"));
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="border border-amber-400 bg-amber-50 rounded px-3 py-3 text-amber-900">
+      <div className="font-bold text-sm mb-1">
+        Add {trackingNumbers.length === 1 ? "this tracking number" : "these tracking numbers"} on marketplace order
+        {orderNumber ? ` ${orderNumber}` : ""}
+      </div>
+      <div className="text-xs mb-2">ShipStation only sends the marketplace one tracking number per order.</div>
+      <ul className="font-mono text-xs space-y-0.5 mb-2">
+        {trackingNumbers.map((t) => (
+          <li key={t}>{t}</li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        onClick={copy}
+        className="px-3 py-1.5 rounded border border-amber-400 bg-white text-amber-900 text-xs hover:bg-amber-100"
+      >
+        {copied ? "Copied" : "Copy tracking numbers"}
+      </button>
     </div>
   );
 }
