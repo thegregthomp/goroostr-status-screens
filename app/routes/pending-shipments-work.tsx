@@ -16,6 +16,7 @@ import {
 } from "~/lib/label-purchase.client";
 import { ShipmentHistory } from "~/components/ShipmentHistory";
 import { historyWeightOz, shipmentSeed, splitLbOz } from "~/lib/combine-shipment";
+import { expandUnitSlots, remapPicks } from "~/lib/unit-slots";
 
 /**
  * Shipping work view — /pending-shipments-work.
@@ -519,10 +520,18 @@ export default function PendingShipmentsWork() {
   // and the picker + payload iterate uniformly. Same `picks: Record<number, InventoryMatch>`
   // key shape as before.
   const [combineSourceRows, setCombineSourceRows] = useState<WorkRow[]>([]);
+  // KAN-640: units per lot, keyed by orderId then line index. A lot line's
+  // quantity counts lots, so "2 × lot of 10" needs 20 pick slots, not 2.
+  const [unitsPerLot, setUnitsPerLot] = useState<Record<string, Record<number, number>>>({});
   const activeRows = useMemo<WorkRow[]>(() => {
-    if (combineSourceRows.length >= 2) return combineSourceRows;
-    return pickerRow ? [pickerRow] : [];
-  }, [pickerRow, combineSourceRows]);
+    const base = combineSourceRows.length >= 2 ? combineSourceRows : pickerRow ? [pickerRow] : [];
+    return base.map((r) => {
+      const lots = unitsPerLot[String(r.order.orderId)];
+      return lots ? { ...r, unitSlots: expandUnitSlots(r.items, lots) } : r;
+    });
+  }, [pickerRow, combineSourceRows, unitsPerLot]);
+  // Single-order pick slots (lot sizes applied) — split mode works on these.
+  const pickerSlots = activeRows[0]?.unitSlots ?? [];
   const allUnitSlots = useMemo(() => {
     return activeRows.flatMap((r) =>
       r.unitSlots.map((slot) => ({ slot, order: r.order }))
@@ -979,7 +988,7 @@ export default function PendingShipmentsWork() {
   // order can be split as two separate shipments (KAN-64).
   const enterSplitMode = () => {
     if (!pickerRow) return;
-    const n = pickerRow.unitSlots.length;
+    const n = pickerSlots.length;
     const half = Math.ceil(n / 2);
     const a = blankSplitShipment();
     const b = blankSplitShipment();
@@ -987,6 +996,27 @@ export default function PendingShipmentsWork() {
     b.itemIndices = Array.from({ length: n - half }, (_, i) => half + i);
     setSplitShipments([a, b]);
     setSplitMode(true);
+  };
+
+  // KAN-640: set how many devices are in each lot of a line. Picks stay on
+  // the units they were made for; split boxes are rebuilt from scratch.
+  const setLineUnitsPerLot = (row: WorkRow, lineIndex: number, per: number) => {
+    const key = String(row.order.orderId);
+    const next = {
+      ...unitsPerLot,
+      [key]: { ...(unitsPerLot[key] ?? {}), [lineIndex]: Math.max(1, Math.min(500, Math.floor(per) || 1)) },
+    };
+    const slotKeys = (lots: typeof unitsPerLot) =>
+      activeRows.flatMap((r) =>
+        expandUnitSlots(r.items, lots[String(r.order.orderId)] ?? {}).map((sl) => ({
+          rowKey: String(r.order.orderId),
+          lineIndex: sl.lineIndex,
+        }))
+      );
+    setPicks((prev) => remapPicks(prev, slotKeys(unitsPerLot), slotKeys(next)));
+    setUnitsPerLot(next);
+    setSplitMode(false);
+    setSplitShipments([]);
   };
 
   const exitSplitMode = () => {
@@ -1049,6 +1079,7 @@ export default function PendingShipmentsWork() {
   // the combined parcel (summed weight + order totals, primary's address).
   const seedShipment = (rows: WorkRow[]) => {
     setPicks({});
+    setUnitsPerLot({});
     setConfirmMode(false);
     setPrintError(null);
     const seed = shipmentSeed(rows.map((r) => r.order));
@@ -1102,6 +1133,7 @@ export default function PendingShipmentsWork() {
     clearLabelRefusal();
     setPickerRow(null);
     setCombineSourceRows([]);
+    setUnitsPerLot({});
     setPicks({});
     setConfirmMode(false);
     setPrintError(null);
@@ -1312,7 +1344,9 @@ export default function PendingShipmentsWork() {
     return () => { cancelled = true; };
     // Re-runs when picks change (items[] changes shape only if the
     // shipper re-picks, which happens back in Stage 1 not confirm).
-  }, [spaEndpoint, pickerRow, activeRows]);
+    // Keyed on the order set, not activeRows identity: changing a lot size
+    // (KAN-640) re-derives activeRows and must not reset a typed weight.
+  }, [spaEndpoint, pickerRow, activeRows.map((r) => r.order.orderId).join(",")]);
 
   // Fetch the account's configured carriers on picker open (prefetch
   // — the rate effect gates on carriers.length, so firing this early
@@ -1586,7 +1620,7 @@ export default function PendingShipmentsWork() {
     // exactly one shipment; every shipment needs its own carrier +
     // service + weight. Split-mode iterates unitSlots so a qty=2
     // single-SKU order can go into two separate shipments (KAN-64).
-    const totalItems = pickerRow.unitSlots.length;
+    const totalItems = pickerSlots.length;
     const assigned = new Set<number>();
     for (const s of splitShipments) for (const i of s.itemIndices) assigned.add(i);
     if (assigned.size !== totalItems) {
@@ -2520,10 +2554,10 @@ export default function PendingShipmentsWork() {
                     OFF: the current single-shipment UI below is rendered
                     as-is. ON: the single-shipment UI hides and the
                     split panel below takes over. */}
-                {!isCombineMode && pickerRow.unitSlots.length >= 2 && (
+                {!isCombineMode && pickerSlots.length >= 2 && (
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
                     <div className="text-xs text-gray-600">
-                      This order has {pickerRow.unitSlots.length} units.
+                      This order has {pickerSlots.length} units.
                     </div>
                     {!splitMode ? (
                       <button
@@ -3438,7 +3472,7 @@ export default function PendingShipmentsWork() {
                     {splitShipments.map((s, si) => {
                       // Split works on physical units (unitSlots) so a
                       // qty=2 single-SKU order can split as 1+1 (KAN-64).
-                      const totalItems = pickerRow.unitSlots.length;
+                      const totalItems = pickerSlots.length;
                       const w = (Number(s.weightLb) || 0) * 16 + (Number(s.weightOz) || 0);
                       return (
                         <div key={si} className="border border-purple-300 bg-purple-50/40 rounded-lg p-3 space-y-2">
@@ -3467,7 +3501,7 @@ export default function PendingShipmentsWork() {
                               move the item there. Uses unitSlots so a
                               qty=2 order renders 2 chips (KAN-64). */}
                           <div className="flex flex-wrap gap-1">
-                            {pickerRow.unitSlots.map((it, ii) => {
+                            {pickerSlots.map((it, ii) => {
                               const isHere = s.itemIndices.includes(ii);
                               return (
                                 <button
@@ -3483,12 +3517,36 @@ export default function PendingShipmentsWork() {
                                   title={isHere ? "Already in this shipment" : "Move to this shipment"}
                                 >
                                   {isHere ? "✓ " : ""}
+                                  {picks[ii]?.id != null ? `#${picks[ii]!.id} · ` : ""}
                                   {it.name?.slice(0, 30) ?? `Item ${ii + 1}`}
                                   {(it.quantity ?? 0) > 1 ? ` ×${it.quantity}` : ""}
                                 </button>
                               );
                             })}
                           </div>
+
+                          {/* KAN-640: every box to one address ships the same
+                              carrier/service — set it once, copy to all. */}
+                          {s.pickedCarrier && s.pickedService && splitShipments.some(
+                            (o) => o.pickedCarrier !== s.pickedCarrier || o.pickedService !== s.pickedService
+                          ) && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSplitShipments((prev) =>
+                                  prev.map((o) => ({
+                                    ...o,
+                                    pickedCarrier: s.pickedCarrier,
+                                    pickedService: s.pickedService,
+                                    confirmation: s.confirmation,
+                                  }))
+                                )
+                              }
+                              className="text-[11px] text-purple-800 underline hover:text-purple-950"
+                            >
+                              Use {(s.pickedCarrier ?? "").toUpperCase()} · {s.pickedService} for all {splitShipments.length} boxes
+                            </button>
+                          )}
 
                           {/* Per-shipment controls — carrier + service +
                               package + weight + signature + insurance.
@@ -3737,6 +3795,39 @@ export default function PendingShipmentsWork() {
                     }
                     let flatI = 0;
                     return activeRows.map((r) => {
+                      const lots = unitsPerLot[String(r.order.orderId)] ?? {};
+                      // KAN-640: lot listings — the line quantity counts
+                      // lots, so ops says how many devices each lot holds
+                      // and every device gets its own pick slot.
+                      const lotPanel = (
+                        <details
+                          className="px-4 py-2 border-b border-slate-200 bg-amber-50/40 text-xs"
+                          open={Object.keys(lots).length > 0}
+                        >
+                          <summary className="cursor-pointer text-amber-900 font-semibold">
+                            Shipping lots? Set devices per lot
+                          </summary>
+                          <div className="mt-2 space-y-1">
+                            {r.items.map((it, li) => (
+                              <label key={li} className="flex items-center gap-2">
+                                <span className="font-mono truncate max-w-[45%]" title={it.name ?? ""}>
+                                  {it.sku ?? "—"} × {Math.max(1, Math.floor(it.quantity ?? 1))}
+                                </span>
+                                <span className="text-gray-600">lot(s) of</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={500}
+                                  value={lots[li] ?? 1}
+                                  onChange={(e) => setLineUnitsPerLot(r, li, Number(e.target.value))}
+                                  className="w-16 border border-gray-300 rounded px-1 py-0.5"
+                                />
+                                <span className="text-gray-600">devices</span>
+                              </label>
+                            ))}
+                          </div>
+                        </details>
+                      );
                       const rowSlots = r.unitSlots.map((slot) => {
                         const i = flatI++;
                         const excludeIds = Object.entries(pickedIdsByIndex)
@@ -3749,6 +3840,7 @@ export default function PendingShipmentsWork() {
                             item={slot}
                             picked={picks[i]}
                             excludeIds={excludeIds}
+                            lotUnit={(slot as { lot?: boolean }).lot === true}
                             onPick={(inv) => setPickForItem(i, inv)}
                             onUnpick={() => unsetPickForItem(i)}
                           />
@@ -3769,6 +3861,7 @@ export default function PendingShipmentsWork() {
                               )}
                             </div>
                           )}
+                          {lotPanel}
                           {rowSlots}
                         </div>
                       );
@@ -4209,6 +4302,7 @@ function ItemPickerSection({
   item,
   picked,
   excludeIds = [],
+  lotUnit = false,
   onPick,
   onUnpick,
 }: {
@@ -4216,6 +4310,7 @@ function ItemPickerSection({
   item: OrderItem;
   picked: InventoryMatch | undefined;
   excludeIds?: number[];
+  lotUnit?: boolean;
   onPick: (inv: InventoryMatch) => void;
   onUnpick: () => void;
 }) {
@@ -4223,6 +4318,10 @@ function ItemPickerSection({
   const [matches, setMatches] = useState<InventoryMatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // KAN-640: devices in a lot keep their own (often blank) inventory SKU, so
+  // a lot slot searches every shippable unit by inventory ID or serial.
+  const [anySku, setAnySku] = useState<boolean>(lotUnit);
+  useEffect(() => setAnySku(lotUnit), [lotUnit]);
   // Hide units already picked in another slot. Same-SKU multi-unit orders
   // with fewer units in stock than needed previously showed the same row
   // in every slot; picking one for slot A no longer offers it in B–N.
@@ -4234,7 +4333,13 @@ function ItemPickerSection({
     // shipper has committed a pick and the search list is hidden.
     if (picked) return;
     const sku = item.sku;
-    if (!sku) {
+    if (anySku) {
+      if (query.trim().length < 2) {
+        setMatches([]);
+        setError(null);
+        return;
+      }
+    } else if (!sku) {
       setMatches([]);
       setError("This item has no SKU — can't pick an inventory unit.");
       return;
@@ -4244,7 +4349,9 @@ function ItemPickerSection({
       setLoading(true);
       setError(null);
       try {
-        const url = `${spaEndpoint}/inventory/search?sku=${encodeURIComponent(sku)}&q=${encodeURIComponent(query)}`;
+        const url = anySku
+          ? `${spaEndpoint}/inventory/search?anySku=1&q=${encodeURIComponent(query.trim())}`
+          : `${spaEndpoint}/inventory/search?sku=${encodeURIComponent(sku ?? "")}&q=${encodeURIComponent(query)}`;
         const resp = await authFetch(url, { signal: controller.signal });
         // A broken endpoint must never read as "no units in stock". KAN-171
         // shadowed this route behind /inventory/{id}; the JSON 404 carried no
@@ -4266,7 +4373,7 @@ function ItemPickerSection({
       controller.abort();
       clearTimeout(t);
     };
-  }, [spaEndpoint, item.sku, query, picked]);
+  }, [spaEndpoint, item.sku, query, picked, anySku]);
 
   const qty = item.quantity ?? 1;
 
@@ -4304,7 +4411,17 @@ function ItemPickerSection({
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter by inventory ID…"
+              // KAN-640: a scanner types the ID + Enter — pick the exact match.
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                const q = query.trim();
+                const exact = visibleMatches.filter((m) => String(m.id) === q || m.serial_number === q);
+                if (exact.length === 1) {
+                  e.preventDefault();
+                  onPick(exact[0]);
+                }
+              }}
+              placeholder={anySku ? "Scan or type inventory ID / serial…" : "Filter by inventory ID…"}
               className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gr-green-dark"
             />
           </div>
@@ -4317,10 +4434,18 @@ function ItemPickerSection({
                 {error}
               </div>
             )}
+            <label className="flex items-center gap-1.5 px-4 pb-1 text-[11px] text-gray-600 cursor-pointer select-none">
+              <input type="checkbox" checked={anySku} onChange={(e) => setAnySku(e.target.checked)} />
+              <span>Any SKU (lot units, mismatched SKUs)</span>
+            </label>
             {!loading && !error && visibleMatches.length === 0 && (
               <div className="text-center text-gray-500 text-sm py-4">
-                {matches.length === 0
-                  ? "No in-stock units for this SKU."
+                {anySku && query.trim().length < 2
+                  ? "Scan or type an inventory ID or serial."
+                  : matches.length === 0
+                  ? anySku
+                    ? "No shippable unit with that ID or serial."
+                    : "No in-stock units for this SKU. Tick “Any SKU” to find a unit by ID."
                   : `No more in-stock units — the other ${matches.length} shown ${matches.length === 1 ? "was" : "were"} picked for another slot.`}
               </div>
             )}
