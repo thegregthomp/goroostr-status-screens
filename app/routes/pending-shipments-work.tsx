@@ -15,6 +15,7 @@ import {
   type LabelRefusal,
 } from "~/lib/label-purchase.client";
 import { ShipmentHistory } from "~/components/ShipmentHistory";
+import { historyWeightOz, shipmentSeed, splitLbOz } from "~/lib/combine-shipment";
 
 /**
  * Shipping work view — /pending-shipments-work.
@@ -627,6 +628,10 @@ export default function PendingShipmentsWork() {
   // dispatches carriers in parallel + caches 5 min so wall-clock is
   // ~slowest single carrier, not the sum.
   const [compareAllCarriers, setCompareAllCarriers] = useState<boolean>(false);
+  // KAN-746: until a carrier is picked (a combined shipment often has none
+  // until the recommendation lands), list every carrier's rates rather than
+  // hiding the table. Only reachable in combine mode — see the table guard.
+  const showAllRates = compareAllCarriers || !pickedCarrier;
 
   // Rate-history hint (2026-08-11) — median postage for the picked
   // SKU + destination state across recent successful ships. Null
@@ -1035,29 +1040,35 @@ export default function PendingShipmentsWork() {
 
   const openPicker = (row: WorkRow) => {
     setPickerRow(row);
+    seedShipment([row]);
+  };
+
+  // Seeds the confirm step from the order(s) being shipped (KAN-746: the
+  // combine flow used to skip this, so its weight stayed blank and no rates
+  // were ever fetched). One row = the single-order defaults; several rows =
+  // the combined parcel (summed weight + order totals, primary's address).
+  const seedShipment = (rows: WorkRow[]) => {
     setPicks({});
     setConfirmMode(false);
     setPrintError(null);
+    const seed = shipmentSeed(rows.map((r) => r.order));
     // Default weight from what ShipStation has on the order (usually
     // populated by automation rules on import). Split whole ounces
     // into lb + oz so both inputs show the split the scale would.
-    const totalOz = row.order.weight?.value;
-    if (totalOz && totalOz > 0) {
-      const lb = Math.floor(totalOz / 16);
-      const oz = totalOz - lb * 16;
-      setWeightLb(lb > 0 ? String(lb) : "");
-      // Preserve fractional oz when present, otherwise show the whole number.
-      setWeightOz(Number.isInteger(oz) ? String(oz) : String(oz));
+    if (seed.weightOz !== null) {
+      const { lb, oz } = splitLbOz(seed.weightOz);
+      setWeightLb(lb);
+      setWeightOz(oz);
     } else {
       setWeightLb("");
       setWeightOz("");
     }
     // Rate-shopping defaults — seeded from the order.
-    setPackageCode(row.order.packageCode ?? "package");
+    setPackageCode(seed.packageCode);
     setDimL("");
     setDimW("");
     setDimH("");
-    setResidential(row.order.shipTo?.residential ?? true);
+    setResidential(seed.residential);
     // Signature defaults to none regardless of what the order was
     // imported with. Shop policy is no-signature by default — even if
     // BackMarket/eBay's automation stamped a signature requirement on
@@ -1068,8 +1079,7 @@ export default function PendingShipmentsWork() {
     //     (external policy covers first $10k, ShipStation covers rest)
     //   ≤ $10k → opt-in via toggle; blank amount until shipper turns
     //     it on and enters what they want
-    const orderTotal = row.order.orderTotal ?? 0;
-    const topUp = Math.max(0, Math.floor(orderTotal - 10000));
+    const topUp = Math.max(0, Math.floor(seed.orderTotal - 10000));
     if (topUp > 0) {
       setInsuranceAmount(String(topUp));
       setInsuranceEnabled(true);
@@ -1084,8 +1094,8 @@ export default function PendingShipmentsWork() {
     // Default carrier + service to whatever the order already has —
     // so a "just print with existing settings" flow is one click
     // after the dropdowns populate.
-    setPickedCarrier(row.order.carrierCode ?? null);
-    setPickedService(row.order.serviceCode ?? row.order.requestedShippingService ?? null);
+    setPickedCarrier(seed.carrierCode);
+    setPickedService(seed.serviceCode);
   };
 
   const closePicker = () => {
@@ -1257,7 +1267,11 @@ export default function PendingShipmentsWork() {
     // effect above, so firing this early lets rates start loading
     // before ops even sees the confirm modal.
     if (!pickerRow) return;
-    const skus = pickerRow.items
+    // KAN-746: a combined shipment weighs every source order's units, not
+    // just the primary's.
+    const combining = activeRows.length >= 2;
+    const historyItems = combining ? activeRows.flatMap((r) => r.items) : pickerRow.items;
+    const skus = historyItems
       .map((it) => it.sku)
       .filter(Boolean)
       .join(",");
@@ -1270,7 +1284,12 @@ export default function PendingShipmentsWork() {
         );
         const data = await resp.json();
         if (cancelled) return;
-        const totalOz = Number(data.totalOz) || 0;
+        // Combined parcel: per-unit medians (quantity counted, a SKU on two
+        // orders counted twice), and only when every unit's SKU is trusted;
+        // otherwise keep the summed order weights seeded on open.
+        const totalOz = combining
+          ? historyWeightOz(historyItems, data.weights ?? {}) ?? 0
+          : Number(data.totalOz) || 0;
         if (totalOz > 0) {
           const lb = Math.floor(totalOz / 16);
           const oz = Math.round((totalOz - lb * 16) * 100) / 100;
@@ -1293,7 +1312,7 @@ export default function PendingShipmentsWork() {
     return () => { cancelled = true; };
     // Re-runs when picks change (items[] changes shape only if the
     // shipper re-picks, which happens back in Stage 1 not confirm).
-  }, [spaEndpoint, pickerRow]);
+  }, [spaEndpoint, pickerRow, activeRows]);
 
   // Fetch the account's configured carriers on picker open (prefetch
   // — the rate effect gates on carriers.length, so firing this early
@@ -1694,6 +1713,7 @@ export default function PendingShipmentsWork() {
     const peers = combinePeersFor(primary);
     setCombineSourceRows([primary, ...peers]);
     setPickerRow(primary);
+    seedShipment([primary, ...peers]);
   };
 
   // KAN-44 Phase B — "New shipment" (no order upstream) modal state.
@@ -3042,11 +3062,11 @@ export default function PendingShipmentsWork() {
                 {/* Rate table. Per-carrier mode = single carrier's
                     services. Compare-all mode = every whitelisted
                     carrier's rates in one merged table sorted by cost. */}
-                {(pickedCarrier || compareAllCarriers) && (
+                {(pickedCarrier || showAllRates || isCombineMode) && (
                   <div>
                     <div className="flex items-baseline justify-between mb-1">
                       <label className="text-[10px] text-gray-500 uppercase tracking-wider flex items-center gap-2">
-                        {compareAllCarriers
+                        {showAllRates
                           ? "All carriers · sorted by cost"
                           : (pickedCarrier ?? "").toUpperCase() + " services"}
                         {ratesLoading && (
@@ -3079,7 +3099,7 @@ export default function PendingShipmentsWork() {
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                           </svg>
                           <div className="text-xs text-gray-500">
-                            Getting {compareAllCarriers ? "all carrier" : (pickedCarrier ?? "").toUpperCase()} rates…
+                            Getting {showAllRates ? "all carrier" : (pickedCarrier ?? "").toUpperCase()} rates…
                           </div>
                         </div>
                       )}
@@ -3100,7 +3120,7 @@ export default function PendingShipmentsWork() {
                         <table className="w-full text-sm">
                           <thead className="bg-slate-50 text-slate-700 text-xs uppercase tracking-wider">
                             <tr>
-                              {compareAllCarriers && (
+                              {showAllRates && (
                                 <th className="text-left px-2 py-1">Carrier</th>
                               )}
                               <th className="text-left px-2 py-1">Service</th>
@@ -3136,7 +3156,7 @@ export default function PendingShipmentsWork() {
                                 }
                                 return out;
                               };
-                              const list = compareAllCarriers
+                              const list = showAllRates
                                 ? [...filterForList(rates)].sort((a, b) => (a.shipmentCost + a.otherCost) - (b.shipmentCost + b.otherCost))
                                 // Backend now returns all whitelisted carriers so the
                                 // recommendation chip has cross-carrier data. Filter to
@@ -3147,7 +3167,7 @@ export default function PendingShipmentsWork() {
                               // In compare mode a row matches only if
                               // BOTH carrier + service match — same
                               // serviceCode can exist across carriers.
-                              const isPicked = compareAllCarriers
+                              const isPicked = showAllRates
                                 ? r.carrierCode === pickedCarrier && r.serviceCode === pickedService
                                 : r.serviceCode === pickedService;
                               const total = r.shipmentCost + r.otherCost;
@@ -3159,7 +3179,7 @@ export default function PendingShipmentsWork() {
                                     // also switches carriers — the
                                     // shipper is committing to that
                                     // whole rate, not just the service.
-                                    if (compareAllCarriers && r.carrierCode) {
+                                    if (showAllRates && r.carrierCode) {
                                       setPickedCarrier(r.carrierCode);
                                     }
                                     setPickedService(r.serviceCode);
@@ -3170,7 +3190,7 @@ export default function PendingShipmentsWork() {
                                   }}
                                   className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${isPicked ? "bg-gr-mint-100" : ""}`}
                                 >
-                                  {compareAllCarriers && (
+                                  {showAllRates && (
                                     <td className="px-2 py-1 text-gray-700 whitespace-nowrap font-mono text-xs">
                                       {(r.carrierCode ?? "").toUpperCase()}
                                     </td>
