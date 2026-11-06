@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { LoaderArgs } from "@remix-run/node";
 import { useLoaderData, Link, useNavigate } from "@remix-run/react";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import stylesheetUrl from "../styles/global.css";
 import { useInterval } from "usehooks-ts";
 import { DateTime } from "luxon";
@@ -45,6 +45,10 @@ export function meta() {
 }
 
 export async function loader({ request }: LoaderArgs) {
+  // KAN-761: flag-gated retirement. Server-side env only; default off.
+  if (process.env.SHIPPING_WORK_RETIRED === "1") {
+    return redirect("/shipping-moved");
+  }
   const api = process.env.GOROOSTR_ENDPOINT ?? "";
   // /spa/... base for auth'd endpoints (login, print-*). Derived from
   // the same env var by stripping the trailing /api so we don't need

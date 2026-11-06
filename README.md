@@ -105,6 +105,10 @@ This is a pretty simple note-taking app, but it's a good example of how you can 
 
 ---
 
+## Feature flags
+
+- `SHIPPING_WORK_RETIRED` (server-side env, default unset/off): set to `1` to redirect `/pending-shipments-work` to `/shipping-moved` (the old shipping work tool is replaced by the GoRoostr Shipping Room app, KAN-761). Unset it to restore the old tool. The TV wall (`/pending-shipments`), `/` and `/list-view` are unaffected.
+
 ## Database
 
 This project uses [Supabase](https://supabase.com/) for data storage and user authentication.
