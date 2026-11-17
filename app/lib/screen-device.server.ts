@@ -48,9 +48,15 @@ const NOT_REGISTERED =
  * True for a registered screen. A `?device=` registration link throws the
  * redirect that stores the cookie (or a 403 for an unknown key).
  */
-export async function isScreenDevice(request: Request): Promise<boolean> {
+export async function isScreenDevice(
+  request: Request,
+  opts: { strict?: boolean } = {}
+): Promise<boolean> {
   const allowed = allowedKeys();
   if (allowed.length === 0) {
+    // strict: used where the answer unlocks data (the keyed status board), so
+    // an unconfigured gate must fail closed instead of open.
+    if (opts.strict) return false;
     console.warn("STATUS_SCREENS_DEVICE_KEYS is unset — the TV wall is not device-gated");
     return true;
   }

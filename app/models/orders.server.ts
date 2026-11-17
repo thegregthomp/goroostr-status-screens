@@ -1,8 +1,23 @@
+import { isScreenDevice } from "~/lib/screen-device.server";
+
 const goroostrApiRoute = process.env.GOROOSTR_ENDPOINT;
 
-export async function getOrders() {
-  // Add paginate=false to get all orders (status screens need everything)
-  const response = await fetch(`${goroostrApiRoute}/get-status-orders?paginate=false`);
+/**
+ * Status board. Without X-Screen-Key the API returns a redacted board (no
+ * amounts, payment type, coupons, serials; last initials). The key is sent
+ * only for registered TVs (device cookie), because `/` and `/list-view` are
+ * otherwise public. Unset env or unregistered browser = redacted board; the
+ * header is ignored by API versions that predate the redaction.
+ */
+export async function getOrders(request: Request, opts: { paginate?: boolean } = { paginate: false }) {
+  const screenKey = process.env.STATUS_SCREENS_API_KEY;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (screenKey && (await isScreenDevice(request, { strict: true }))) {
+    headers["X-Screen-Key"] = screenKey;
+  }
+  // paginate=false returns all orders (status screens need everything)
+  const qs = opts.paginate === false ? "?paginate=false" : "";
+  const response = await fetch(`${goroostrApiRoute}/get-status-orders${qs}`, { headers });
   return await response.json();
 }
 

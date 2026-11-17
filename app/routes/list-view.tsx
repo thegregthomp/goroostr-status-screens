@@ -17,7 +17,7 @@ export function links() {
 }
 
 export async function loader({ request }: LoaderArgs) {
-  const ordersData = await getOrders();
+  const ordersData = await getOrders(request);
   return json({
     ...ordersData,
     apiEndpoint: process.env.GOROOSTR_ENDPOINT
@@ -199,7 +199,7 @@ export default function ListView() {
   useInterval(async () => {
     setIsRefreshing(true);
     try {
-      const response = await fetch(`${apiEndpoint}/get-status-orders`);
+      const response = await fetch("/screens/status-orders");
       const { data, custom } = await response.json();
       setOrders([...data, ...custom]);
       setCustomOrders(custom);
